@@ -292,11 +292,13 @@ def production_line(radar_file_name,
     radar.add_field_like('ZDR', 'ZDR_CORR', corr_zdr, replace_existing=True)
 
     # GateFilter
-    gatefilter = filtering.do_gatefilter_opol(radar,
-                                                refl_name='DBZ',
-                                                phidp_name="PHIDP",
-                                                rhohv_name='RHOHV_CORR',
-                                                zdr_name="ZDR")
+    gatefilter, echoclass = filtering.do_gatefilter_opol(radar,
+                                                         refl_name='DBZ',
+                                                         phidp_name="PHIDP",
+                                                         rhohv_name='RHOHV_CORR',
+                                                         zdr_name="ZDR")
+
+    radar.add_field('radar_echo_classification', echoclass)
 
     phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
     radar.add_field('PHIDP_VAL', phidp)
