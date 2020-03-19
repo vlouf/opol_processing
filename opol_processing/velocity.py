@@ -4,8 +4,7 @@ Codes for correcting Doppler velocity.
 @title: velocity
 @author: Valentin Louf <valentin.louf@monash.edu>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@creation: 11/12/2017
-@date: 08/02/2020
+@date: 19/03/2020
 
 .. autosummary::
     :toctree: generated/

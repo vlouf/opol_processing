@@ -5,8 +5,7 @@ Gaussian Mixture Models to remove noise and clutter from CPOL data before 2009.
 @title: filtering
 @author: Valentin Louf <valentin.louf@monash.edu>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 20/11/2017
-@modification: 09/03/2020
+@date: 19/03/2020
 
 .. autosummary::
     :toctree: generated/
@@ -130,7 +129,7 @@ def get_clustering(radar, vel_name='VEL', phidp_name='PHIDP', zdr_name='ZDR'):
 
 def get_gatefilter_GMM(radar, refl_name='DBZ', vel_name='VEL', phidp_name='PHIDP', zdr_name='ZDR'):
     """
-    Filtering function adapted to CPOL before 2009 using ML Gaussian Mixture
+    Filtering function adapted to OPOL before 2009 using ML Gaussian Mixture
     Model. Function does 4 things:
     1) Cutoff of the reflectivities below the noise level.
     2) GMM using the texture of velocity, phidp and zdr.

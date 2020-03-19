@@ -8,10 +8,10 @@ from shutil import rmtree
 from setuptools import find_packages, setup, Command
 
 # Package meta-data.
-NAME = 'cpol_processing'
+NAME = 'opol_processing'
 DESCRIPTION = """Radar PPIs data processing, quality control, filtering, attenuation
 correction, dealiasing, unfolding, hydrometeors calculation, rainfall rate estimation."""
-URL = 'https://github.com/vlouf/cpol_processing'
+URL = 'https://github.com/vlouf/opol_processing'
 EMAIL = 'valentin.louf@monash.edu'
 AUTHOR = 'Valentin Louf'
 
@@ -28,11 +28,6 @@ here = os.path.abspath(os.path.dirname(__file__))
 
 with io.open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = '\n' + f.read()
-
-# Load the package's __version__.py module as a dictionary.
-about = {}
-with open(os.path.join(here, NAME, '__version__.py')) as f:
-    exec(f.read(), about)
 
 class PublishCommand(Command):
     """Support setup.py publish."""
@@ -67,7 +62,7 @@ class PublishCommand(Command):
 
 setup(
     name=NAME,
-    version=about['__version__'],
+    version='0.0.1',
     description=DESCRIPTION,
     long_description=long_description,
     long_description_content_type='text/markdown',

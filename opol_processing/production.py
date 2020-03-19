@@ -1,12 +1,12 @@
 """
-CPOL Level 1b main production line. These are the drivers function.
+OPOL Level 1b main production line. These are the drivers function.
 
 @title: production
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @copyright: Valentin Louf (2017-2020)
 @institution: Bureau of Meteorology and Monash University
-@date: 25/02/2020
+@date: 19/03/2020
 
 .. autosummary::
     :toctree: generated/
@@ -57,7 +57,7 @@ def _mkdir(dir):
 def process_and_save(radar_file_name,
                      outpath,
                      sound_dir=None,
-                     instrument='CPOL',
+                     instrument='OPOL',
                      do_dealiasing=True,
                      use_unravel=True):
     """
@@ -72,14 +72,14 @@ def process_and_save(radar_file_name,
     sound_dir: str
         Path to radiosoundings directory.
     instrument: str
-        Name of radar (only CPOL will change something).
+        Name of radar (only OPOL will change something).
     do_dealiasing: bool
         Dealias velocity.
     use_unravel: bool
         Use of UNRAVEL for dealiasing the velocity
     """
     today = datetime.datetime.utcnow()
-    if instrument == 'CPOL':
+    if instrument == 'OPOL':
         is_cpol = True
     else:
         is_cpol = False
@@ -110,7 +110,7 @@ def process_and_save(radar_file_name,
     _mkdir(outpath_ppi)
 
     # Generate output file name.
-    if instrument == 'CPOL':
+    if instrument == 'OPOL':
         outfilename = "twp10cpolppi.b1.{}00.nc".format(radar_start_date.strftime("%Y%m%d.%H%M"))
     else:
         outfilename = "cfrad." + radar_start_date.strftime("%Y%m%d_%H%M%S") + ".nc"
@@ -153,7 +153,7 @@ def process_and_save(radar_file_name,
                     'id': unique_id,
                     'institution': 'Bureau of Meteorology',
                     'instrument': 'radar',
-                    'instrument_name': 'CPOL',
+                    'instrument_name': 'OPOL',
                     'instrument_type': 'radar',
                     'keywords': 'radar, tropics, Doppler, dual-polarization',
                     'licence': "Freely Distributed",
@@ -163,7 +163,7 @@ def process_and_save(radar_file_name,
                     'origin_longitude': origin_longitude,
                     'platform_is_mobile': 'false',
                     'processing_level': 'b1',
-                    'project': "CPOL",
+                    'project': "OPOL",
                     'publisher_name': "NCI",
                     'publisher_url': "nci.gov.au",
                     'product_version': f"v{today.year}.{today.month:02}",
@@ -172,12 +172,12 @@ def process_and_save(radar_file_name,
                     'source': 'radar',
                     'state': "NT",
                     'standard_name_vocabulary': 'CF Standard Name Table v71',
-                    'summary': "Volumetric scan from CPOL dual-polarization Doppler radar (Darwin, Australia)",
+                    'summary': "Volumetric scan from OPOL dual-polarization Doppler radar (Darwin, Australia)",
                     'time_coverage_start': radar_start_date.isoformat(),
                     'time_coverage_end': radar_end_date.isoformat(),
                     'time_coverage_duration': "P10M",
                     'time_coverage_resolution': "PT10M",
-                    'title': "radar PPI volume from CPOL",
+                    'title': "radar PPI volume from OPOL",
                     'uuid': unique_id,
                     'version': radar.metadata['version']}
 
@@ -200,7 +200,7 @@ def production_line(radar_file_name,
                     do_dealiasing=True, 
                     use_unravel=True):
     """
-    Production line for correcting and estimating CPOL data radar parameters.
+    Production line for correcting and estimating OPOL data radar parameters.
     The naming convention for these parameters is assumed to be DBZ, ZDR, VEL,
     PHIDP, KDP, SNR, RHOHV, and NCP. KDP, NCP, and SNR are optional and can be
     recalculated.
@@ -211,8 +211,8 @@ def production_line(radar_file_name,
         Name of the input radar file.
     sound_dir: str
         Path to radiosounding directory.
-    is_cpol: bool
-        Name of radar (only CPOL will change something).
+    is_OPOL: bool
+        Name of radar (only OPOL will change something).
     do_dealiasing: bool
         Dealias velocity.
     use_unravel: bool

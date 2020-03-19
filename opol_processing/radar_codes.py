@@ -4,8 +4,7 @@ Codes for correcting and estimating various radar and meteorological parameters.
 @title: radar_codes
 @author: Valentin Louf <valentin.louf@monash.edu>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@creation: 04/04/2017
-@date: 01/10/2019
+@date: 19/03/2020
 
 .. autosummary::
     :toctree: generated/
