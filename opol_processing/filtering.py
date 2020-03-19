@@ -190,7 +190,7 @@ def get_gatefilter_GMM(radar, refl_name='DBZ', vel_name='VEL', phidp_name='PHIDP
     return gf
 
 
-def do_gatefilter_cpol(radar,
+def do_gatefilter_opol(radar,
                        refl_name='DBZ',
                        phidp_name="PHIDP",
                        rhohv_name='RHOHV_CORR',
@@ -260,53 +260,6 @@ def do_gatefilter_cpol(radar,
     try:
         radar.fields.pop('NDBZ')
         # radar.fields.pop('PHITXT')
-    except Exception:
-        pass
-
-    return gf_despeckeld
-
-
-def do_gatefilter(radar, refl_name='DBZ', phidp_name="PHIDP", rhohv_name='RHOHV_CORR', zdr_name="ZDR", snr_name='SNR'):
-    """
-    Basic filtering function for dual-polarisation data.
-
-    Parameters:
-    ===========
-        radar:
-            Py-ART radar structure.
-        refl_name: str
-            Reflectivity field name.
-        rhohv_name: str
-            Cross correlation ratio field name.
-        ncp_name: str
-            Name of the normalized_coherent_power field.
-        zdr_name: str
-            Name of the differential_reflectivity field.
-
-    Returns:
-    ========
-        gf_despeckeld: GateFilter
-            Gate filter (excluding all bad data).
-    """
-    # Initialize gatefilter
-    gf = pyart.filters.GateFilter(radar)
-
-    # Remove obviously wrong data.
-    gf.exclude_outside(zdr_name, -6.0, 7.0)
-    gf.exclude_outside(refl_name, -20.0, 80.0)
-
-    # Compute texture of PHIDP and remove noise.
-    dphi = texture(radar.fields[phidp_name]['data'])
-    radar.add_field_like(phidp_name, 'PHITXT', dphi)
-    gf.exclude_above('PHITXT', 20)
-    gf.exclude_below(rhohv_name, 0.6)
-
-    # Despeckle
-    gf_despeckeld = pyart.correct.despeckle_field(radar, refl_name, gatefilter=gf)
-
-    try:
-        # Remove PHIDP texture
-        radar.fields.pop('PHITXT')
     except Exception:
         pass
 
