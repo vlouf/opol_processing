@@ -42,8 +42,8 @@ def main():
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        import cpol_processing
-        cpol_processing.process_and_save(INFILE, OUTPATH, SOUND_DIR, use_unravel=USE_UNRAVEL)
+        import opol_processing
+        opol_processing.process_and_save(INFILE, OUTPATH, SOUND_DIR, use_unravel=USE_UNRAVEL)
 
     print(crayons.green("Process completed."))
 

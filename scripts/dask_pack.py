@@ -26,7 +26,7 @@ import traceback
 import dask
 import dask.bag as db
 import crayons
-import cpol_processing
+import opol_processing
 
 
 def chunks(l, n):
@@ -70,7 +70,7 @@ def buffer(infile):
         Path for saving output data.
     """    
     try:
-        cpol_processing.process_and_save(infile, 
+        opol_processing.process_and_save(infile, 
                                          OUTPATH, 
                                          sound_dir=SOUND_DIR,
                                          do_dealiasing=DO_DEALIASING, 
