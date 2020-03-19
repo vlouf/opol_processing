@@ -47,7 +47,9 @@ def get_gatefilter_GMM(radar, dbz_name, zdr_name, phidp_name, width_name, rhohv_
         GateFilter of the Meteorological echoes only.
     '''
     # Load Scikit model
-    with gzip.GzipFile('data/GM_model_radar_metechoes.pkl.gz', 'r') as gzid:
+    location = os.path.dirname(os.path.realpath(__file__))
+    my_file = os.path.join(location, 'data', 'GM_model_radar_metechoes.pkl.gz')
+    with gzip.GzipFile(my_file, 'r') as gzid:
         meteorological_echoes_GMM = pickle.load(gzid)
 
     df_orig = pd.DataFrame({'total_power': radar.fields[dbz_name]['data'].flatten(),

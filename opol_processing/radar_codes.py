@@ -232,7 +232,7 @@ def read_radar(radar_file_name):
     radar = pyart.aux_io.read_odim_h5(radar_file_name, file_field_names=False)
     myfields = [('normalized_coherent_power', "NCP"),
                 ('reflectivity', "DBZ_CORR_ORIG"),
-                ('sprectrum_width', "WIDTH"),
+                ('spectrum_width', "WIDTH"),
                 ('total_power', "DBZ"),
                 ("differential_reflectivity", "ZDR"),                
                 ('velocity', "VEL"),

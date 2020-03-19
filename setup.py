@@ -70,7 +70,7 @@ setup(
     author_email=EMAIL,
     url=URL,
     packages=find_packages(exclude=['contrib', 'docs', 'tests']),
-    package_data={'cpol_processing': ['data/GM_model_radar_metechoes.pkl.gz']},
+    package_data={'opol_processing': ['data/GM_model_radar_metechoes.pkl.gz']},
     install_requires=REQUIRED,
     include_package_data=True,
     license='ISC',

@@ -74,10 +74,6 @@ def process_and_save(radar_file_name,
         Use of UNRAVEL for dealiasing the velocity
     """
     today = datetime.datetime.utcnow()
-    if instrument == 'OPOL':
-        is_cpol = True
-    else:
-        is_cpol = False
 
     # Create directories.
     _mkdir(outpath)
@@ -90,7 +86,7 @@ def process_and_save(radar_file_name,
     # Business start here.
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        radar = production_line(radar_file_name, sound_dir, is_cpol=is_cpol, use_unravel=use_unravel)
+        radar = production_line(radar_file_name, do_dealiasing=do_dealiasing, use_unravel=use_unravel)
     # Business over.
 
     if radar is None:
@@ -105,7 +101,7 @@ def process_and_save(radar_file_name,
     _mkdir(outpath_ppi)
 
     # Generate output file name.
-    outfilename = "twp10cpolppi.b1.{}00.nc".format(radar_start_date.strftime("%Y%m%d.%H%M"))
+    outfilename = "rvi6opolppi.b1.{}00.nc".format(radar_start_date.strftime("%Y%m%d.%H%M"))
     outfilename = os.path.join(outpath_ppi, outfilename)
 
     # Check if output file already exists.
@@ -230,6 +226,7 @@ def production_line(radar_file_name,
                     ('VEL_UNFOLDED', 'corrected_velocity'),
                     ('DBZ', 'total_power'),
                     ('DBZ_CORR', 'corrected_reflectivity'),
+                    ('DBZ_CORR_ORIG', 'corrected_reflectivity_edge'),
                     ('RHOHV_CORR', 'cross_correlation_ratio'),
                     ('ZDR', 'differential_reflectivity'),
                     ('ZDR_CORR_ATTEN', 'corrected_differential_reflectivity'),
