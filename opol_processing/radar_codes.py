@@ -17,8 +17,10 @@ Codes for correcting and estimating various radar and meteorological parameters.
 """
 # Python Standard Library
 import os
+import re
 import glob
 import time
+import fnmatch
 import datetime
 
 # Other Libraries
@@ -214,6 +216,42 @@ def coverage_content_type(radar):
     return None
 
 
+def get_radiosoundings(sound_dir, radar_start_date):
+    """
+    Find the radiosoundings
+    """
+    def _fdate(flist):
+        rslt = [None] * len(flist)
+        for cnt, f in enumerate(flist):
+            try:
+                rslt[cnt] = datetime.datetime.strptime(re.findall("[0-9]{8}", f)[0], "%Y%m%d")
+            except Exception:
+                continue
+        return rslt
+    # Looking for radiosoundings:
+    all_sonde_files = sorted(os.listdir(sound_dir))
+
+    pos = [cnt for cnt, f in enumerate(all_sonde_files) if fnmatch.fnmatch(f, "*" + radar_start_date.strftime("%Y%m%d") + "*")]
+    if len(pos) > 0:
+        # Looking for the exact date.
+        sonde_name = all_sonde_files[pos[0]]
+        sonde_name = os.path.join(sound_dir, sonde_name)
+    else:
+        # Looking for the closest date.
+        dtime_none = _fdate(all_sonde_files)
+        dtime = [d for d in dtime_none if d is not None]
+        closest_date = _nearest(dtime, radar_start_date)
+        sonde_name = [e for e in all_sonde_files if closest_date.strftime("%Y%m%d") in e]
+        if len(sonde_name) == 0:
+            sonde_name = os.path.join(sound_dir, all_sonde_files[-1])
+        elif type(sonde_name) is list:
+            sonde_name = os.path.join(sound_dir, sonde_name[0])
+        else:
+            sonde_name = os.path.join(sound_dir, sonde_name)
+
+    return sonde_name
+
+
 def read_radar(radar_file_name):
     """
     Read the input radar file.
@@ -249,3 +287,64 @@ def read_radar(radar_file_name):
 
     radar.fields['VEL']['units'] = "m s-1"
     return radar
+
+
+def snr_and_sounding(radar, sonde_name, temp_field_name="temp"):
+    """
+    Compute the signal-to-noise ratio as well as interpolating the radiosounding
+    temperature on to the radar grid. The function looks for the radiosoundings
+    that happened at the closest time from the radar. There is no time
+    difference limit.
+    Parameters:
+    ===========
+        radar:
+        sonde_name: str
+            Path to the radiosoundings.
+        refl_field_name: str
+            Name of the reflectivity field.
+    Returns:
+    ========
+        z_dict: dict
+            Altitude in m, interpolated at each radar gates.
+        temp_info_dict: dict
+            Temperature in Celsius, interpolated at each radar gates.
+        snr: dict
+            Signal to noise ratio.
+    """
+    radar_start_date = netCDF4.num2date(radar.time['data'][0], radar.time['units'])
+    # Altitude hack.
+    true_alt = radar.altitude['data'].copy()
+    radar.altitude['data'] = np.array([0])
+
+    # print("Reading radiosounding %s" % (sonde_name))
+    interp_sonde = netCDF4.Dataset(sonde_name)
+    temperatures = interp_sonde.variables[temp_field_name][:]
+    temperatures[(temperatures < -100) | (temperatures > 100)] = np.NaN
+    try:
+        temperatures = temperatures.filled(np.NaN)
+    except AttributeError:
+        pass
+    # times = interp_sonde.variables['time'][:]
+    # heights = interp_sonde.variables['height'][:]
+
+    # Height profile corresponding to radar.
+    my_profile = pyart.retrieve.fetch_radar_time_profile(interp_sonde, radar)
+
+    # CPOL altitude is 50 m.
+    good_altitude = my_profile['height'] >= 0
+    # Getting the temperature
+    z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temperatures[good_altitude],
+                                                            my_profile['height'][good_altitude],
+                                                            radar)
+
+    temp_info_dict = {'data': temp_dict['data'],
+                      'long_name': 'Sounding temperature at gate',
+                      'standard_name': 'temperature',
+                      'valid_min': -100, 'valid_max': 100,
+                      'units': 'degrees Celsius',
+                      'comment': 'Radiosounding date: %s' % (radar_start_date.strftime("%Y/%m/%d"))}
+
+    # Altitude hack
+    radar.altitude['data'] = true_alt
+
+    return z_dict, temp_info_dict
