@@ -32,6 +32,7 @@ import numpy as np
 # Custom modules.
 from . import attenuation
 from . import filtering
+from . import hydrometeors
 from . import phase
 from . import radar_codes
 from . import velocity
@@ -56,7 +57,8 @@ def _mkdir(dir):
 def process_and_save(radar_file_name,
                      outpath,
                      do_dealiasing=True,
-                     use_unravel=True):
+                     use_unravel=True,
+                     sound_dir=None):
     """
     Call processing function and write data.
 
@@ -86,7 +88,10 @@ def process_and_save(radar_file_name,
     # Business start here.
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        radar = production_line(radar_file_name, do_dealiasing=do_dealiasing, use_unravel=use_unravel)
+        radar = production_line(radar_file_name,
+                                do_dealiasing=do_dealiasing,
+                                use_unravel=use_unravel,
+                                sound_dir=sound_dir)
     # Business over.
 
     if radar is None:
@@ -179,7 +184,8 @@ def process_and_save(radar_file_name,
 
 def production_line(radar_file_name,
                     do_dealiasing=True,
-                    use_unravel=True):
+                    use_unravel=True,
+                    sound_dir=None):
     """
     Production line for correcting and estimating OPOL data radar parameters.
     The naming convention for these parameters is assumed to be DBZ, ZDR, VEL,
@@ -218,7 +224,7 @@ def production_line(radar_file_name,
     10/ Compute Giangrande's PHIDP using pyart.
     11/ Unfold velocity.
     12/ Compute attenuation for ZH
-    13/ Compute attenuation for ZDR    
+    13/ Compute attenuation for ZDR
     16/ Removing fake/temporary fieds.
     17/ Rename fields to pyart standard names.
     """
@@ -287,6 +293,18 @@ def production_line(radar_file_name,
     # Correct ZDR
     corr_zdr = radar_codes.correct_zdr(radar)
     radar.add_field_like('ZDR', 'ZDR_CORR', corr_zdr, replace_existing=True)
+
+    # Temperature
+    if sound_dir is not None:        
+        try:
+            radiosonde_fname = radar_codes.get_radiosoundings(sound_dir, radar_start_date)
+            height, temperature = radar_codes.snr_and_sounding(radar, radiosonde_fname)
+            radar.add_field('temperature', temperature, replace_existing=True)
+            radar.add_field('height', height, replace_existing=True)
+            has_temperature = True
+        except ValueError:
+            has_temperature = False
+            pass
 
     # GateFilter
     gatefilter, echoclass = filtering.do_gatefilter_opol(radar,
