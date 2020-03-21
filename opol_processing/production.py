@@ -317,8 +317,7 @@ def production_line(radar_file_name,
 
     phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
     radar.add_field('PHIDP_VAL', phidp)
-    radar.add_field('KDP_VAL', kdp)
-    kdp_field_name = 'KDP_VAL'
+    radar.add_field('KDP_VAL', kdp)    
     phidp_field_name = 'PHIDP_VAL'
 
     # Unfold VELOCITY
