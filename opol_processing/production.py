@@ -295,16 +295,16 @@ def production_line(radar_file_name,
     radar.add_field_like('ZDR', 'ZDR_CORR', corr_zdr, replace_existing=True)
 
     # Temperature
-    if sound_dir is not None:        
-        try:
-            radiosonde_fname = radar_codes.get_radiosoundings(sound_dir, radar_start_date)
-            height, temperature = radar_codes.snr_and_sounding(radar, radiosonde_fname)
-            radar.add_field('temperature', temperature, replace_existing=True)
-            radar.add_field('height', height, replace_existing=True)
-            has_temperature = True
-        except ValueError:
-            has_temperature = False
-            pass
+    # if sound_dir is not None:        
+    #     try:
+    #         radiosonde_fname = radar_codes.get_radiosoundings(sound_dir, radar_start_date)
+    #         height, temperature = radar_codes.snr_and_sounding(radar, radiosonde_fname)
+    #         radar.add_field('temperature', temperature, replace_existing=True)
+    #         radar.add_field('height', height, replace_existing=True)
+    #         has_temperature = True
+    #     except ValueError:
+    #         has_temperature = False
+    #         pass
 
     # GateFilter
     gatefilter, echoclass = filtering.do_gatefilter_opol(radar,
