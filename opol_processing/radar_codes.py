@@ -25,6 +25,7 @@ import datetime
 
 # Other Libraries
 import pyart
+import cftime
 import netCDF4
 import numpy as np
 
@@ -311,24 +312,22 @@ def snr_and_sounding(radar, sonde_name, temp_field_name="temp"):
         snr: dict
             Signal to noise ratio.
     """
-    radar_start_date = netCDF4.num2date(radar.time['data'][0], radar.time['units'])
+    radar_start_date = cftime.num2date(radar.time['data'][0], radar.time['units'],
+                                       only_use_cftime_datetimes=False,
+                                       only_use_python_datetimes=True)    
     # Altitude hack.
     true_alt = radar.altitude['data'].copy()
     radar.altitude['data'] = np.array([0])
 
     # print("Reading radiosounding %s" % (sonde_name))
-    interp_sonde = netCDF4.Dataset(sonde_name)
-    temperatures = interp_sonde.variables[temp_field_name][:]
-    temperatures[(temperatures < -100) | (temperatures > 100)] = np.NaN
-    try:
-        temperatures = temperatures.filled(np.NaN)
-    except AttributeError:
-        pass
-    # times = interp_sonde.variables['time'][:]
-    # heights = interp_sonde.variables['height'][:]
-
-    # Height profile corresponding to radar.
-    my_profile = pyart.retrieve.fetch_radar_time_profile(interp_sonde, radar)
+    with netCDF4.Dataset(sonde_name) as interp_sonde:
+        temperatures = interp_sonde[temp_field_name][:]
+        temperatures[(temperatures < -100) | (temperatures > 100)] = np.NaN
+        try:
+            temperatures = temperatures.filled(np.NaN)
+        except AttributeError:
+            pass
+        my_profile = pyart.retrieve.fetch_radar_time_profile(interp_sonde, radar)
 
     # CPOL altitude is 50 m.
     good_altitude = my_profile['height'] >= 0

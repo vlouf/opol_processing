@@ -26,6 +26,7 @@ import warnings
 
 # Other Libraries
 import pyart
+import cftime
 import netCDF4
 import numpy as np
 
@@ -98,8 +99,12 @@ def process_and_save(radar_file_name,
         print(f'{radar_file_name} has not been processed. Check logs.')
         return None
 
-    radar_start_date = netCDF4.num2date(radar.time['data'][0], radar.time['units'])
-    radar_end_date = netCDF4.num2date(radar.time['data'][-1], radar.time['units'])
+    radar_start_date = cftime.num2date(radar.time['data'][0], radar.time['units'],
+                                        only_use_cftime_datetimes=False,
+                                        only_use_python_datetimes=True)
+    radar_end_date = cftime.num2date(radar.time['data'][-1], radar.time['units'],
+                                      only_use_cftime_datetimes=False,
+                                      only_use_python_datetimes=True)
     outpath_ppi = os.path.join(outpath_ppi, str(radar_start_date.year))
     _mkdir(outpath_ppi)
     outpath_ppi = os.path.join(outpath_ppi, radar_start_date.strftime('%Y%m%d'))
@@ -283,7 +288,9 @@ def production_line(radar_file_name,
         raise TypeError(f"Reflectivity field is empty in {radar_file_name}.")
 
     # Getting radar's date and time.
-    radar_start_date = netCDF4.num2date(radar.time['data'][0], radar.time['units'].replace("since", "since "))
+    radar_start_date = cftime.num2date(radar.time['data'][0], radar.time['units'].replace("since", "since "),
+                                        only_use_cftime_datetimes=False,
+                                        only_use_python_datetimes=True)
     radar.time['units'] = radar.time['units'].replace("since", "since ")
 
     # Correct RHOHV
@@ -295,7 +302,7 @@ def production_line(radar_file_name,
     radar.add_field_like('ZDR', 'ZDR_CORR', corr_zdr, replace_existing=True)
 
     # Temperature
-    # if sound_dir is not None:        
+    # if sound_dir is not None:
     #     try:
     #         radiosonde_fname = radar_codes.get_radiosoundings(sound_dir, radar_start_date)
     #         height, temperature = radar_codes.snr_and_sounding(radar, radiosonde_fname)
@@ -317,7 +324,7 @@ def production_line(radar_file_name,
 
     phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
     radar.add_field('PHIDP_VAL', phidp)
-    radar.add_field('KDP_VAL', kdp)    
+    radar.add_field('KDP_VAL', kdp)
     phidp_field_name = 'PHIDP_VAL'
 
     # Unfold VELOCITY
