@@ -38,23 +38,6 @@ def chunks(l, n):
         yield l[i:i + n]
 
 
-def welcome_message():
-    """
-    Display a welcome message with the input information.
-    """
-    print("#" * 79)
-    print("")
-    print(" " * 25 + crayons.red("Raw radar PPIs production line.\n", bold=True))
-    print(" - Input data directory path is: " + crayons.yellow(INPATH))
-    print(" - Output data directory path is: " + crayons.yellow(OUTPATH))
-    print(f" - The process will occur between {crayons.yellow(START_DATE)} and {crayons.yellow(END_DATE)}.")
-    if USE_UNRAVEL:
-        print(" - " + crayons.yellow("UNRAVEL") + " will be used as dealiasing algorithm.")
-    else:
-        print(" - " + crayons.yellow("REGION-BASED") + " will be used as dealiasing algorithm.")
-    print("\n" + "#" * 79 + "\n")
-
-
 def buffer(infile):
     """
     It calls the production line and manages it. Buffer function that is used
@@ -120,10 +103,7 @@ calculation, and rainfall rate estimation."""
     args = parser.parse_args()
     USE_UNRAVEL = args.unravel
     DO_DEALIASING = args.dealias
-    INPATH = args.indir    
-
-    # Display infos
-    welcome_message()
+    INPATH = args.indir
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
