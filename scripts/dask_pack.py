@@ -62,7 +62,7 @@ def buffer(infile):
     return None
 
 
-def main(date_range):
+def main():
     flist = sorted(glob.glob(os.path.join(INPATH, '**/*.hdf')))
     print(f'Found {len(flist)} files in {INPATH}')
     for fchunk in chunks(flist, 64):
