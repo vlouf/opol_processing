@@ -6,7 +6,7 @@ OPOL Level 1b main production line. These are the drivers function.
 @email: valentin.louf@bom.gov.au
 @copyright: Valentin Louf (2017-2020)
 @institution: Bureau of Meteorology and Monash University
-@date: 19/03/2020
+@date: 16/04/2020
 
 .. autosummary::
     :toctree: generated/
@@ -302,13 +302,14 @@ def production_line(radar_file_name,
                                                          refl_name='DBZ',
                                                          phidp_name="PHIDP",
                                                          rhohv_name='RHOHV_CORR',
-                                                         zdr_name="ZDR")
-    radar.add_field('radar_echo_classification', echoclass)
+                                                         zdr_name="ZDR")    
+    radar.add_field('air_echo_classification', echoclass, replace_existing=True)
 
     phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
     radar.add_field('PHIDP_VAL', phidp)
     radar.add_field('KDP_VAL', kdp)
     phidp_field_name = 'PHIDP_VAL'
+    kdp_field_name = 'KDP_VAL'
 
     # Unfold VELOCITY
     if do_dealiasing:
@@ -321,6 +322,23 @@ def production_line(radar_file_name,
 
     zdr_corr = attenuation.correct_attenuation_zdr(radar, gatefilter)
     radar.add_field('ZDR_CORR_ATTEN', zdr_corr)
+
+    # Hydrometeors classification
+    hydro_class = hydrometeors.hydrometeor_classification(radar,
+                                                          gatefilter,
+                                                          kdp_name=kdp_field_name,
+                                                          zdr_name='ZDR_CORR_ATTEN')
+
+    radar.add_field('radar_echo_classification', hydro_class, replace_existing=True)
+
+    # Rainfall rate
+    rainfall = hydrometeors.rainfall_rate(radar,
+                                          gatefilter,
+                                          kdp_name=kdp_field_name,
+                                          refl_name='DBZ_CORR',
+                                          zdr_name='ZDR_CORR_ATTEN')
+    radar.add_field("radar_estimated_rain_rate", rainfall)
+
 
     # Remove obsolete fields:
     for obsolete_key in ["Refl", "PHI_UNF", "PHI_CORR", "height", 'TH', 'TV', 'ZDR_CORR', 'RHOHV']:
