@@ -46,8 +46,7 @@ def welcome_message():
     print("")
     print(" " * 25 + crayons.red("Raw radar PPIs production line.\n", bold=True))
     print(" - Input data directory path is: " + crayons.yellow(INPATH))
-    print(" - Output data directory path is: " + crayons.yellow(OUTPATH))
-    print(" - Radiosounding directory path is: " + crayons.yellow(SOUND_DIR))
+    print(" - Output data directory path is: " + crayons.yellow(OUTPATH))    
     print(f" - The process will occur between {crayons.yellow(START_DATE)} and {crayons.yellow(END_DATE)}.")
     if USE_UNRAVEL:
         print(" - " + crayons.yellow("UNRAVEL") + " will be used as dealiasing algorithm.")
@@ -71,8 +70,7 @@ def buffer(infile):
     """    
     try:
         opol_processing.process_and_save(infile, 
-                                         OUTPATH, 
-                                         sound_dir=SOUND_DIR,
+                                         OUTPATH,                                          
                                          do_dealiasing=DO_DEALIASING, 
                                          use_unravel=USE_UNRAVEL)
     except Exception:
@@ -105,8 +103,7 @@ if __name__ == '__main__':
     """
     # Main global variables (Path directories).
     INPATH = "/g/data/hj10/admin/cpol_level_1a/v2019/ppi/"
-    OUTPATH = '/g/data/hj10/admin/cpol_level_1b/v2020/'
-    SOUND_DIR = "/g/data/kl02/vhl548/darwin_ancillary/DARWIN_radiosonde"
+    OUTPATH = '/g/data/hj10/admin/cpol_level_1b/v2020/'    
 
     # Parse arguments
     parser_description =  """Raw radar PPIs processing. It provides Quality

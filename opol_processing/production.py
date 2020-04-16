@@ -58,8 +58,7 @@ def _mkdir(dir):
 def process_and_save(radar_file_name,
                      outpath,
                      do_dealiasing=True,
-                     use_unravel=True,
-                     sound_dir=None):
+                     use_unravel=True):
     """
     Call processing function and write data.
 
@@ -68,9 +67,7 @@ def process_and_save(radar_file_name,
     radar_file_name: str
         Name of the input radar file.
     outpath: str
-        Path for saving output data.
-    sound_dir: str
-        Path to radiosoundings directory.
+        Path for saving output data.    
     do_dealiasing: bool
         Dealias velocity.
     use_unravel: bool
@@ -91,8 +88,7 @@ def process_and_save(radar_file_name,
         warnings.simplefilter('ignore')
         radar = production_line(radar_file_name,
                                 do_dealiasing=do_dealiasing,
-                                use_unravel=use_unravel,
-                                sound_dir=sound_dir)
+                                use_unravel=use_unravel)
     # Business over.
 
     if radar is None:
@@ -189,8 +185,7 @@ def process_and_save(radar_file_name,
 
 def production_line(radar_file_name,
                     do_dealiasing=True,
-                    use_unravel=True,
-                    sound_dir=None):
+                    use_unravel=True):
     """
     Production line for correcting and estimating OPOL data radar parameters.
     The naming convention for these parameters is assumed to be DBZ, ZDR, VEL,
@@ -200,9 +195,7 @@ def production_line(radar_file_name,
     Parameters:
     ===========
     radar_file_name: str
-        Name of the input radar file.
-    sound_dir: str
-        Path to radiosounding directory.
+        Name of the input radar file.    
     is_OPOL: bool
         Name of radar (only OPOL will change something).
     do_dealiasing: bool

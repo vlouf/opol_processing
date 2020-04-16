@@ -32,8 +32,7 @@ def main():
     print("")
     print(" " * 25 + crayons.red("Raw radar PPIs production line.\n", bold=True))
     print(" - Input data directory path is: " + crayons.yellow(INFILE))
-    print(" - Output data directory path is: " + crayons.yellow(OUTPATH))
-    print(" - Radiosounding directory path is: " + crayons.yellow(SOUND_DIR))
+    print(" - Output data directory path is: " + crayons.yellow(OUTPATH))    
     if USE_UNRAVEL:
         print(" - " + crayons.yellow("UNRAVEL") + " will be used as dealiasing algorithm.")
     else:
@@ -43,7 +42,7 @@ def main():
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         import opol_processing
-        opol_processing.process_and_save(INFILE, OUTPATH, SOUND_DIR, use_unravel=USE_UNRAVEL)
+        opol_processing.process_and_save(INFILE, OUTPATH, use_unravel=USE_UNRAVEL)
 
     print(crayons.green("Process completed."))
 
@@ -79,13 +78,6 @@ calculation, and rainfall rate estimation."""
         type=str,
         help='Output directory.',
         required=True)
-    parser.add_argument(
-        '-r',
-        '--radiosounds',
-        dest='rs_dir',
-        type=str,
-        help='Radiosoundings directory.',
-        default="/g/data/kl02/vhl548/darwin_ancillary/DARWIN_radiosonde")
 
     parser.add_argument('--unravel', dest='unravel', action='store_true')
     parser.add_argument('--no-unravel', dest='unravel', action='store_false')
@@ -93,8 +85,7 @@ calculation, and rainfall rate estimation."""
 
     args = parser.parse_args()
     INFILE = args.infile
-    OUTPATH = args.outdir
-    SOUND_DIR =  args.rs_dir
+    OUTPATH = args.outdir    
     USE_UNRAVEL = args.unravel
 
     if not os.path.isfile(INFILE):
