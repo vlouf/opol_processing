@@ -2,10 +2,10 @@
 Raw radar PPIs processing. Quality control, filtering, attenuation correction,
 dealiasing, unfolding, hydrometeors calculation, rainfall rate estimation.
 
-@title: cpol_processing
+@title: opol_processing
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institution: Monash University and Bureau of Meteorology
-@date: 10/03/2020
+@date: 16/04/2020
 
 .. autosummary::
     :toctree: generated/
@@ -46,7 +46,7 @@ def welcome_message():
     print("")
     print(" " * 25 + crayons.red("Raw radar PPIs production line.\n", bold=True))
     print(" - Input data directory path is: " + crayons.yellow(INPATH))
-    print(" - Output data directory path is: " + crayons.yellow(OUTPATH))    
+    print(" - Output data directory path is: " + crayons.yellow(OUTPATH))
     print(f" - The process will occur between {crayons.yellow(START_DATE)} and {crayons.yellow(END_DATE)}.")
     if USE_UNRAVEL:
         print(" - " + crayons.yellow("UNRAVEL") + " will be used as dealiasing algorithm.")
@@ -67,31 +67,24 @@ def buffer(infile):
         Name of the input radar file.
     outpath: str
         Path for saving output data.
-    """    
+    """
     try:
-        opol_processing.process_and_save(infile, 
-                                         OUTPATH,                                          
-                                         do_dealiasing=DO_DEALIASING, 
+        opol_processing.process_and_save(infile,
+                                         OUTPATH,
+                                         do_dealiasing=DO_DEALIASING,
                                          use_unravel=USE_UNRAVEL)
     except Exception:
-        traceback.print_exc()        
+        traceback.print_exc()
 
     return None
 
 
 def main(date_range):
-    for day in date_range:
-        input_dir = os.path.join(INPATH, str(day.year), day.strftime("%Y%m%d"), "*.*")
-        flist = sorted(glob.glob(input_dir))
-        if len(flist) == 0:
-            print('No file found for {}.'.format(day.strftime("%Y-%b-%d")))
-            continue
-
-        print(f'{len(flist)} files found for ' + day.strftime("%Y-%b-%d"))
-
-        for flist_chunk in chunks(flist, 32):
-            bag = db.from_sequence(flist_chunk).map(buffer)
-            _ = bag.compute()
+    flist = sorted(glob.glob(os.path.join(INPATH, '**/*.hdf')))
+    print(f'Found {len(flist)} files in {INPATH}')
+    for fchunk in chunks(flist, 64):
+        bag = db.from_sequence(fchunk).map(buffer)
+        _ = bag.compute()
         del bag
 
     return None
@@ -102,8 +95,7 @@ if __name__ == '__main__':
     Global variables definition.
     """
     # Main global variables (Path directories).
-    INPATH = "/g/data/hj10/admin/cpol_level_1a/v2019/ppi/"
-    OUTPATH = '/g/data/hj10/admin/cpol_level_1b/v2020/'    
+    OUTPATH = '/scratch/kl02/vhl548/opol/'
 
     # Parse arguments
     parser_description =  """Raw radar PPIs processing. It provides Quality
@@ -111,20 +103,12 @@ control, filtering, attenuation correction, dealiasing, unfolding, hydrometeors
 calculation, and rainfall rate estimation."""
     parser = argparse.ArgumentParser(description=parser_description)
     parser.add_argument(
-        '-s',
-        '--start-date',
-        dest='start_date',
+        '-i',
+        '--input-dir',
+        dest='indir',
         default=None,
         type=str,
-        help='Starting date.',
-        required=True)
-    parser.add_argument(
-        '-e',
-        '--end-date',
-        dest='end_date',
-        default=None,
-        type=str,
-        help='Ending date.',
+        help='Input directory.',
         required=True)
     parser.add_argument('--unravel', dest='unravel', action='store_true')
     parser.add_argument('--no-unravel', dest='unravel', action='store_false')
@@ -134,25 +118,13 @@ calculation, and rainfall rate estimation."""
     parser.set_defaults(dealias=True)
 
     args = parser.parse_args()
-    START_DATE = args.start_date
-    END_DATE = args.end_date
     USE_UNRAVEL = args.unravel
     DO_DEALIASING = args.dealias
-
-    # Check date
-    try:
-        start = datetime.datetime.strptime(START_DATE, "%Y%m%d")
-        end = datetime.datetime.strptime(END_DATE, "%Y%m%d")
-        if start > end:
-            parser.error('End date older than start date.')
-        date_range = [start + datetime.timedelta(days=x) for x in range(0, (end - start).days + 1, )]
-    except ValueError:
-        parser.error('Invalid dates.')
-        sys.exit()
+    INPATH = args.indir    
 
     # Display infos
     welcome_message()
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        main(date_range)
+        main()
