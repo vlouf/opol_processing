@@ -20,7 +20,6 @@ import os
 import re
 import glob
 import time
-import fnmatch
 import datetime
 
 # Other Libraries
@@ -28,6 +27,8 @@ import pyart
 import cftime
 import netCDF4
 import numpy as np
+import pandas as pd
+import xarray as xr
 
 
 def _nearest(items, pivot):
@@ -217,55 +218,19 @@ def coverage_content_type(radar):
     return None
 
 
-def get_radiosoundings(sound_dir, radar_start_date):
-    """
-    Find the radiosoundings
-    """
-    def _fdate(flist):
-        rslt = [None] * len(flist)
-        for cnt, f in enumerate(flist):
-            try:
-                rslt[cnt] = datetime.datetime.strptime(re.findall("[0-9]{8}", f)[0], "%Y%m%d")
-            except Exception:
-                continue
-        return rslt
-    # Looking for radiosoundings:
-    all_sonde_files = sorted(os.listdir(sound_dir))
-
-    pos = [cnt for cnt, f in enumerate(all_sonde_files) if fnmatch.fnmatch(f, "*" + radar_start_date.strftime("%Y%m%d") + "*")]
-    if len(pos) > 0:
-        # Looking for the exact date.
-        sonde_name = all_sonde_files[pos[0]]
-        sonde_name = os.path.join(sound_dir, sonde_name)
-    else:
-        # Looking for the closest date.
-        dtime_none = _fdate(all_sonde_files)
-        dtime = [d for d in dtime_none if d is not None]
-        closest_date = _nearest(dtime, radar_start_date)
-        sonde_name = [e for e in all_sonde_files if closest_date.strftime("%Y%m%d") in e]
-        if len(sonde_name) == 0:
-            sonde_name = os.path.join(sound_dir, all_sonde_files[-1])
-        elif type(sonde_name) is list:
-            sonde_name = os.path.join(sound_dir, sonde_name[0])
-        else:
-            sonde_name = os.path.join(sound_dir, sonde_name)
-
-    return sonde_name
-
-
 def read_radar(radar_file_name):
     """
     Read the input radar file.
 
     Parameter:
     ==========
-        radar_file_name: str
-            Radar file name.
+    radar_file_name: str
+        Radar file name.
 
     Return:
     =======
-        radar: struct
-            Py-ART radar structure.
+    radar: struct
+        Py-ART radar structure.
     """
     # Read the input radar file.
     radar = pyart.aux_io.read_odim_h5(radar_file_name, file_field_names=False)
@@ -290,7 +255,7 @@ def read_radar(radar_file_name):
     return radar
 
 
-def snr_and_sounding(radar, sonde_name, temp_field_name="temp"):
+def temperature_profile(radar):
     """
     Compute the signal-to-noise ratio as well as interpolating the radiosounding
     temperature on to the radar grid. The function looks for the radiosoundings
@@ -298,52 +263,35 @@ def snr_and_sounding(radar, sonde_name, temp_field_name="temp"):
     difference limit.
     Parameters:
     ===========
-        radar:
-        sonde_name: str
-            Path to the radiosoundings.
-        refl_field_name: str
-            Name of the reflectivity field.
+    radar:
+        Py-ART radar object.
+
     Returns:
     ========
-        z_dict: dict
-            Altitude in m, interpolated at each radar gates.
-        temp_info_dict: dict
-            Temperature in Celsius, interpolated at each radar gates.
-        snr: dict
-            Signal to noise ratio.
+    z_dict: dict
+        Altitude in m, interpolated at each radar gates.
+    temp_info_dict: dict
+        Temperature in Celsius, interpolated at each radar gates.
     """
-    radar_start_date = cftime.num2date(radar.time['data'][0], radar.time['units'],
-                                       only_use_cftime_datetimes=False,
-                                       only_use_python_datetimes=True)    
-    # Altitude hack.
-    true_alt = radar.altitude['data'].copy()
-    radar.altitude['data'] = np.array([0])
+    grlat = radar.latitude['data'][0]
+    grlon = radar.longitude['data'][0]
+    dtime = pd.Timestamp(cftime.num2pydate(radar.time['data'][0], radar.time['units']))
 
-    # print("Reading radiosounding %s" % (sonde_name))
-    with netCDF4.Dataset(sonde_name) as interp_sonde:
-        temperatures = interp_sonde[temp_field_name][:]
-        temperatures[(temperatures < -100) | (temperatures > 100)] = np.NaN
-        try:
-            temperatures = temperatures.filled(np.NaN)
-        except AttributeError:
-            pass
-        my_profile = pyart.retrieve.fetch_radar_time_profile(interp_sonde, radar)
+    year = dtime.year
+    era5 = f'/g/data/rq0/admin/temperature_profiles/era5_data/{year}_openradar_temp_geopot.nc'
+    if not os.path.isfile(era5):
+        raise FileNotFoundError(f'{era5}: no such file for temperature.')
 
-    # CPOL altitude is 50 m.
-    good_altitude = my_profile['height'] >= 0
     # Getting the temperature
-    z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temperatures[good_altitude],
-                                                            my_profile['height'][good_altitude],
-                                                            radar)
+    dset = xr.open_dataset(era5)
+    temp = dset.sel(longitude=grlon, latitude=grlat, time=dtime, method='nearest')
+    z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temp.t, temp.z, radar)
 
     temp_info_dict = {'data': temp_dict['data'],
                       'long_name': 'Sounding temperature at gate',
                       'standard_name': 'temperature',
                       'valid_min': -100, 'valid_max': 100,
                       'units': 'degrees Celsius',
-                      'comment': 'Radiosounding date: %s' % (radar_start_date.strftime("%Y/%m/%d"))}
-
-    # Altitude hack
-    radar.altitude['data'] = true_alt
+                      'comment': 'Radiosounding date: %s' % (dtime.strftime("%Y/%m/%d"))}
 
     return z_dict, temp_info_dict
