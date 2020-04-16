@@ -297,7 +297,7 @@ def temperature_profile(radar):
     temp = dset.sel(longitude=grlon, latitude=grlat, time=dtime, method='nearest')
     z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temp.t, temp.z, radar)
 
-    temp_info_dict = {'data': temp_dict['data'],
+    temp_info_dict = {'data': temp_dict['data'] - 273.15,  # Switch to celsius.
                       'long_name': 'Sounding temperature at gate',
                       'standard_name': 'temperature',
                       'valid_min': -100, 'valid_max': 100,

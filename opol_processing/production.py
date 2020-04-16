@@ -168,8 +168,7 @@ def process_and_save(radar_file_name,
                 'time_coverage_duration': "P06M",
                 'time_coverage_resolution': "PT06M",
                 'title': "radar PPI volume from OPOL",
-                'uuid': unique_id,
-                'version': radar.metadata['version']}
+                'uuid': unique_id}
     radar.metadata = metadata
 
     # Write results
