@@ -108,7 +108,7 @@ def process_and_save(radar_file_name,
     _mkdir(outpath_ppi)
 
     # Generate output file name.
-    outfilename = "rvi6opolppi.b1.{}00.nc".format(radar_start_date.strftime("%Y%m%d.%H%M"))
+    outfilename = "rvi6opolppi.b1.{}.nc".format(radar_start_date.strftime("%Y%m%d.%H%M%S"))
     outfilename = os.path.join(outpath_ppi, outfilename)
 
     # Check if output file already exists.
