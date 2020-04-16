@@ -286,12 +286,10 @@ def production_line(radar_file_name,
     # Check if radar reflecitivity field is correct.
     if not radar_codes.check_reflectivity(radar):
         raise TypeError(f"Reflectivity field is empty in {radar_file_name}.")
-
-    # Getting radar's date and time.
-    radar_start_date = cftime.num2date(radar.time['data'][0], radar.time['units'].replace("since", "since "),
-                                        only_use_cftime_datetimes=False,
-                                        only_use_python_datetimes=True)
-    radar.time['units'] = radar.time['units'].replace("since", "since ")
+    
+    if "since " not in radar.time['units']:
+        # Signal processing forgot (sometime) a space in generating the unit.
+        radar.time['units'] = radar.time['units'].replace("since", "since ")
 
     # Correct RHOHV
     rho_corr = radar_codes.correct_rhohv(radar)
@@ -301,17 +299,10 @@ def production_line(radar_file_name,
     corr_zdr = radar_codes.correct_zdr(radar)
     radar.add_field_like('ZDR', 'ZDR_CORR', corr_zdr, replace_existing=True)
 
-    # Temperature
-    # if sound_dir is not None:
-    #     try:
-    #         radiosonde_fname = radar_codes.get_radiosoundings(sound_dir, radar_start_date)
-    #         height, temperature = radar_codes.snr_and_sounding(radar, radiosonde_fname)
-    #         radar.add_field('temperature', temperature, replace_existing=True)
-    #         radar.add_field('height', height, replace_existing=True)
-    #         has_temperature = True
-    #     except ValueError:
-    #         has_temperature = False
-    #         pass
+    # Temperature    
+    height, temperature = radar_codes.temperature_profile(radar)
+    radar.add_field('temperature', temperature, replace_existing=True)
+    radar.add_field('height', height, replace_existing=True)    
 
     # GateFilter
     gatefilter, echoclass = filtering.do_gatefilter_opol(radar,
@@ -319,7 +310,6 @@ def production_line(radar_file_name,
                                                          phidp_name="PHIDP",
                                                          rhohv_name='RHOHV_CORR',
                                                          zdr_name="ZDR")
-
     radar.add_field('radar_echo_classification', echoclass)
 
     phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
