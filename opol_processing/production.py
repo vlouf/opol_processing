@@ -58,7 +58,8 @@ def _mkdir(dir):
 def process_and_save(radar_file_name,
                      outpath,
                      do_dealiasing=True,
-                     use_unravel=True):
+                     use_unravel=True,
+                     debug=False):
     """
     Call processing function and write data.
 
@@ -173,7 +174,8 @@ def process_and_save(radar_file_name,
 
     # Write results
     pyart.io.write_cfradial(outfilename, radar, format='NETCDF4')
-    print('%s processed in  %0.2fs.' % (os.path.basename(radar_file_name), (time.time() - tick)))
+    if debug:
+        print('%s processed in  %0.2fs.' % (os.path.basename(radar_file_name), (time.time() - tick)))
 
     # Free memory
     del radar
