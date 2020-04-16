@@ -8,12 +8,12 @@ Codes for correcting and estimating various radar and meteorological parameters.
 
 .. autosummary::
     :toctree: generated/
-    
+
     check_reflectivity
     check_year
     correct_rhohv
-    correct_zdr    
-    read_radar    
+    correct_zdr
+    read_radar
 """
 # Python Standard Library
 import os
@@ -233,17 +233,27 @@ def read_radar(radar_file_name):
         Py-ART radar structure.
     """
     # Read the input radar file.
-    radar = pyart.aux_io.read_odim_h5(radar_file_name, file_field_names=False)
-    myfields = [('normalized_coherent_power', "NCP"),
-                ('reflectivity', "DBZ_CORR_ORIG"),
-                ('spectrum_width', "WIDTH"),
-                ('total_power', "DBZ"),
-                ("differential_reflectivity", "ZDR"),                
-                ('velocity', "VEL"),
-                ('signal_to_noise_ratio', "SNR"),
-                ("cross_correlation_ratio", "RHOHV"),
-                ("differential_phase", "PHIDP"),
-                ]
+    if '.nc' in radar_file_name:
+        radar = pyart.io.read(radar_file_name)
+        myfields = [('UH', 'DBZ'),
+                    ('DBZH', 'DBZ_CORR_ORIG'),
+                    ('NCPH', 'NCP'),
+                    ('SNRHC', 'SNR'),
+                    ('VELH', 'VEL'),
+                    ('WIDTHH', 'WIDTH'),
+                    ]
+    else:
+        radar = pyart.aux_io.read_odim_h5(radar_file_name, file_field_names=False)
+        myfields = [('normalized_coherent_power', "NCP"),
+                    ('reflectivity', "DBZ_CORR_ORIG"),
+                    ('spectrum_width', "WIDTH"),
+                    ('total_power', "DBZ"),
+                    ("differential_reflectivity", "ZDR"),
+                    ('velocity', "VEL"),
+                    ('signal_to_noise_ratio', "SNR"),
+                    ("cross_correlation_ratio", "RHOHV"),
+                    ("differential_phase", "PHIDP"),
+                    ]
 
     for mykey, newkey in myfields:
         try:
