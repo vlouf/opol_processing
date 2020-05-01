@@ -275,7 +275,6 @@ def temperature_profile(radar):
     ===========
     radar:
         Py-ART radar object.
-
     Returns:
     ========
     z_dict: dict
@@ -295,9 +294,18 @@ def temperature_profile(radar):
     # Getting the temperature
     dset = xr.open_dataset(era5)
     temp = dset.sel(longitude=grlon, latitude=grlat, time=dtime, method='nearest')
-    z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temp.t, temp.z, radar)
+    
+    #extract data
+    geopot_profile = np.array(temp.z.values/9.80665) #geopot -> geopotH
+    temp_profile = np.array(temp.t.values - 273.15)
+    
+    #append surface data using lowest level
+    geopot_profile = np.append(geopot_profile,[0])
+    temp_profile = np.append(temp_profile, temp_profile[-1])
+        
+    z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temp_profile, geopot_profile, radar)
 
-    temp_info_dict = {'data': temp_dict['data'] - 273.15,  # Switch to celsius.
+    temp_info_dict = {'data': temp_dict['data'],  # Switch to celsius.
                       'long_name': 'Sounding temperature at gate',
                       'standard_name': 'temperature',
                       'valid_min': -100, 'valid_max': 100,
