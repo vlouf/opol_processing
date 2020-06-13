@@ -264,7 +264,14 @@ def production_line(radar_file_name,
                         'total_power',
                         'velocity']
 
-    radar = radar_codes.read_radar(radar_file_name)
+    nradar = radar_codes.read_radar(radar_file_name)
+    # Correct OceanPOL offset.
+    if nradar.nsweeps <= 1:
+        del nradar
+        return None
+
+    radar = nradar.extract_sweeps(range(1, nradar.nsweeps))
+    radar.elevation['data'] = radar.elevation['data'] - .9
 
     # Correct data type manually
     try:
