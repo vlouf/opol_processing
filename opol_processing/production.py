@@ -6,7 +6,7 @@ OPOL Level 1b main production line. These are the drivers function.
 @email: valentin.louf@bom.gov.au
 @copyright: Valentin Louf (2017-2020)
 @institution: Bureau of Meteorology and Monash University
-@date: 16/04/2020
+@date: 13/06/2020
 
 .. autosummary::
     :toctree: generated/
@@ -68,7 +68,7 @@ def process_and_save(radar_file_name,
     radar_file_name: str
         Name of the input radar file.
     outpath: str
-        Path for saving output data.    
+        Path for saving output data.
     do_dealiasing: bool
         Dealias velocity.
     use_unravel: bool
@@ -193,7 +193,7 @@ def production_line(radar_file_name,
     Parameters:
     ===========
     radar_file_name: str
-        Name of the input radar file.    
+        Name of the input radar file.
     is_OPOL: bool
         Name of radar (only OPOL will change something).
     do_dealiasing: bool
@@ -277,7 +277,7 @@ def production_line(radar_file_name,
     # Check if radar reflecitivity field is correct.
     if not radar_codes.check_reflectivity(radar):
         raise TypeError(f"Reflectivity field is empty in {radar_file_name}.")
-    
+
     if "since " not in radar.time['units']:
         # Signal processing forgot (sometime) a space in generating the unit.
         radar.time['units'] = radar.time['units'].replace("since", "since ")
@@ -290,17 +290,17 @@ def production_line(radar_file_name,
     corr_zdr = radar_codes.correct_zdr(radar)
     radar.add_field_like('ZDR', 'ZDR_CORR', corr_zdr, replace_existing=True)
 
-    # Temperature    
+    # Temperature
     height, temperature = radar_codes.temperature_profile(radar)
     radar.add_field('temperature', temperature, replace_existing=True)
-    radar.add_field('height', height, replace_existing=True)    
+    radar.add_field('height', height, replace_existing=True)
 
     # GateFilter
     gatefilter, echoclass = filtering.do_gatefilter_opol(radar,
                                                          refl_name='DBZ',
                                                          phidp_name="PHIDP",
                                                          rhohv_name='RHOHV_CORR',
-                                                         zdr_name="ZDR")    
+                                                         zdr_name="ZDR")
     radar.add_field('air_echo_classification', echoclass, replace_existing=True)
 
     phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
@@ -351,11 +351,6 @@ def production_line(radar_file_name,
             radar.add_field(new_key, radar.fields.pop(old_key), replace_existing=True)
         except KeyError:
             continue
-
-    # Delete working variables.
-    # for k in list(radar.fields.keys()):
-    #     if k not in OUTPUT_RADAR_FLD:
-    #         radar.fields.pop(k)
 
     # Correct the standard_name metadata:
     radar_codes.correct_standard_name(radar)
