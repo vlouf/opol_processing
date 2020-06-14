@@ -248,22 +248,6 @@ def production_line(radar_file_name,
                     ('SNRV', 'signal_to_noise_ratio_v'),
                     ('SQIV', 'normalized_coherent_power_v')]
 
-    # List of keys that we'll keep in the output radar dataset.
-    OUTPUT_RADAR_FLD = ['corrected_differential_phase',
-                        'corrected_differential_reflectivity',
-                        'corrected_reflectivity',
-                        'corrected_specific_differential_phase',
-                        'corrected_velocity',
-                        'cross_correlation_ratio',
-                        'differential_phase',
-                        'differential_reflectivity',
-                        'radar_echo_classification',
-                        'radar_estimated_rain_rate',
-                        'signal_to_noise_ratio',
-                        'spectrum_width',
-                        'total_power',
-                        'velocity']
-
     nradar = radar_codes.read_radar(radar_file_name)
     # Correct OceanPOL offset.
     if nradar.nsweeps <= 1:
