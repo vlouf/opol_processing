@@ -6,7 +6,7 @@ OPOL Level 1b main production line. These are the drivers function.
 @email: valentin.louf@bom.gov.au
 @copyright: Valentin Louf (2017-2020)
 @institution: Bureau of Meteorology and Monash University
-@date: 13/06/2020
+@date: 14/06/2020
 
 .. autosummary::
     :toctree: generated/
@@ -272,6 +272,8 @@ def production_line(radar_file_name,
 
     radar = nradar.extract_sweeps(range(1, nradar.nsweeps))
     radar.elevation['data'] = radar.elevation['data'] - .9
+    # Correct dtype.
+    radar.elevation['data'] = radar.elevation['data'].astype(np.float32)
 
     # Correct data type manually
     try:
