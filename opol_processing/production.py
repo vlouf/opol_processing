@@ -18,6 +18,7 @@ OPOL Level 1b main production line. These are the drivers function.
 # Python Standard Library
 import gc
 import os
+import copy
 import time
 import uuid
 import datetime
@@ -254,7 +255,11 @@ def production_line(radar_file_name,
         del nradar
         return None
 
-    radar = nradar.extract_sweeps(range(1, nradar.nsweeps))
+    # Correct OPOL ZDR offset.
+    nradar.fields['ZDR']['data'] += 1.0
+
+    radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
+    del nradar
     radar.elevation['data'] = radar.elevation['data'] - .9
     # Correct dtype.
     radar.elevation['data'] = radar.elevation['data'].astype(np.float32)
