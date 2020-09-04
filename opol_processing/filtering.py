@@ -5,7 +5,7 @@ Gaussian Mixture Models to remove noise and clutter from CPOL data before 2009.
 @title: filtering
 @author: Valentin Louf <valentin.louf@monash.edu>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 19/03/2020
+@date: 04/09/2020
 
 .. autosummary::
     :toctree: generated/
@@ -24,7 +24,7 @@ import pandas as pd
 
 
 def get_gatefilter_GMM(radar, dbz_name, zdr_name, phidp_name, width_name, rhohv_name):
-    '''
+    """
     Filters non-meteorological signal out using ML classification.
 
     Parameters:
@@ -45,53 +45,53 @@ def get_gatefilter_GMM(radar, dbz_name, zdr_name, phidp_name, width_name, rhohv_
     --------
     gf: pyart-gatefilter object
         GateFilter of the Meteorological echoes only.
-    '''
+    """
     # Load Scikit model
     location = os.path.dirname(os.path.realpath(__file__))
-    my_file = os.path.join(location, 'data', 'GM_model_radar_metechoes.pkl.gz')
-    with gzip.GzipFile(my_file, 'r') as gzid:
+    my_file = os.path.join(location, "data", "GM_model_radar_metechoes.pkl.gz")
+    with gzip.GzipFile(my_file, "r") as gzid:
         meteorological_echoes_GMM = pickle.load(gzid)
 
-    df_orig = pd.DataFrame({'total_power': radar.fields[dbz_name]['data'].flatten(),
-                            'differential_reflectivity': radar.fields[zdr_name]['data'].flatten(),
-                            'differential_phase': radar.fields[phidp_name]['data'].flatten(),
-                            'spectrum_width': radar.fields[width_name]['data'].flatten(),
-                            'cross_correlation_ratio': radar.fields[rhohv_name]['data'].flatten(),
-                           })
+    df_orig = pd.DataFrame(
+        {
+            "total_power": radar.fields[dbz_name]["data"].flatten(),
+            "differential_reflectivity": radar.fields[zdr_name]["data"].flatten(),
+            "differential_phase": radar.fields[phidp_name]["data"].flatten(),
+            "spectrum_width": radar.fields[width_name]["data"].flatten(),
+            "cross_correlation_ratio": radar.fields[rhohv_name]["data"].flatten(),
+        }
+    )
 
     pos_droped = df_orig.dropna().index
     radar_cluster = meteorological_echoes_GMM.predict(df_orig.dropna())
 
-    r = radar.range['data']
-    time = radar.time['data']
+    r = radar.range["data"]
+    time = radar.time["data"]
     R, T = np.meshgrid(r, time)
 
     clus = np.zeros_like(R.flatten())
     clus[pos_droped] = radar_cluster + 1
     cluster = clus.reshape(R.shape)
 
-    meteorological_signal = ((cluster >= 5) | (cluster == 2))  # | ((R < 20e3) & ((cluster == 1) | (cluster == 4)))
+    meteorological_signal = (cluster >= 5) | (cluster == 2)  # | ((R < 20e3) & ((cluster == 1) | (cluster == 4)))
 
     hydro_class = np.zeros(cluster.shape, dtype=np.int16)
     hydro_class[meteorological_signal] = 3
     hydro_class[((R < 20e3) & ((cluster == 1) | (cluster == 4)))] = 2
     hydro_class[(hydro_class == 0) & (cluster != 0)] = 1
 
-    radar.add_field('good_mask', {'data': meteorological_signal})
+    radar.add_field("good_mask", {"data": meteorological_signal})
     gf = pyart.filters.GateFilter(radar)
-    gf.exclude_equal('good_mask', 0)
+    gf.exclude_equal("good_mask", 0)
     gf = pyart.correct.despeckle_field(radar, dbz_name, gatefilter=gf)
-    _ = radar.fields.pop('good_mask')
+    _ = radar.fields.pop("good_mask")
 
     return gf, hydro_class
 
 
-def do_gatefilter_opol(radar,
-                       refl_name='DBZ',
-                       phidp_name="PHIDP",
-                       rhohv_name='RHOHV_CORR',
-                       zdr_name="ZDR",
-                       width_name='WIDTH'):
+def do_gatefilter_opol(
+    radar, refl_name="DBZ", phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR", width_name="WIDTH"
+):
     """
     Filtering function adapted to CPOL.
 
@@ -113,16 +113,20 @@ def do_gatefilter_opol(radar,
         gf_despeckeld: GateFilter
             Gate filter (excluding all bad data).
     """
-    gf, hydroclass = get_gatefilter_GMM(radar,
-                                        dbz_name=refl_name,
-                                        zdr_name=zdr_name,
-                                        phidp_name=phidp_name,
-                                        width_name=width_name,
-                                        rhohv_name=rhohv_name)
+    gf, hydroclass = get_gatefilter_GMM(
+        radar,
+        dbz_name=refl_name,
+        zdr_name=zdr_name,
+        phidp_name=phidp_name,
+        width_name=width_name,
+        rhohv_name=rhohv_name,
+    )
 
-    echoclass = {'data': hydroclass,
-                 'long_name': 'radar_echo_classification',
-                 'units': ' ',
-                 'description': '0: N/A, 1: Clutter, 2: Clear Air, 3: Meteorological echoes'}
+    echoclass = {
+        "data": hydroclass,
+        "long_name": "radar_echo_classification",
+        "units": " ",
+        "description": "0: N/A, 1: Clutter, 2: Clear Air, 3: Meteorological echoes",
+    }
 
     return gf, echoclass

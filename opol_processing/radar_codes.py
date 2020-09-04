@@ -4,7 +4,7 @@ Codes for correcting and estimating various radar and meteorological parameters.
 @title: radar_codes
 @author: Valentin Louf <valentin.louf@monash.edu>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 16/06/2020
+@date: 04/09/2020
 
 .. autosummary::
     :toctree: generated/
@@ -50,7 +50,7 @@ def _nearest(items, pivot):
     return min(items, key=lambda x: abs(x - pivot))
 
 
-def check_reflectivity(radar, refl_field_name='DBZ'):
+def check_reflectivity(radar, refl_field_name="DBZ"):
     """
     Checking if radar has a proper reflectivity field.  It's a minor problem
     concerning a few days in 2011 for CPOL.
@@ -66,7 +66,7 @@ def check_reflectivity(radar, refl_field_name='DBZ'):
     =======
     True if radar has a non-empty reflectivity field.
     """
-    dbz = radar.fields[refl_field_name]['data']
+    dbz = radar.fields[refl_field_name]["data"]
 
     if np.ma.isMaskedArray(dbz):
         if dbz.count() == 0:
@@ -76,7 +76,7 @@ def check_reflectivity(radar, refl_field_name='DBZ'):
     return True
 
 
-def correct_rhohv(radar, rhohv_name='RHOHV', snr_name='SNR'):
+def correct_rhohv(radar, rhohv_name="RHOHV", snr_name="SNR"):
     """
     Correct cross correlation ratio (RHOHV) from noise. From the Schuur et al.
     2003 NOAA report (p7 eq 5)
@@ -95,10 +95,10 @@ def correct_rhohv(radar, rhohv_name='RHOHV', snr_name='SNR'):
         rho_corr: array
             Corrected cross correlation ratio.
     """
-    rhohv = radar.fields[rhohv_name]['data'].copy()
-    snr = radar.fields[snr_name]['data'].copy()
+    rhohv = radar.fields[rhohv_name]["data"].copy()
+    snr = radar.fields[snr_name]["data"].copy()
 
-    natural_snr = 10**(0.1 * snr)
+    natural_snr = 10 ** (0.1 * snr)
     natural_snr = natural_snr.filled(-9999)
     rho_corr = rhohv * (1 + 1 / natural_snr)
 
@@ -124,41 +124,41 @@ def correct_standard_name(radar):
         Py-ART data structure.
     """
     try:
-        radar.range.pop('standard_name')
-        radar.azimuth.pop('standard_name')
-        radar.elevation.pop('standard_name')
+        radar.range.pop("standard_name")
+        radar.azimuth.pop("standard_name")
+        radar.elevation.pop("standard_name")
     except Exception:
         pass
 
     try:
-        radar.sweep_number.pop('standard_name')
-        radar.fixed_angle.pop('standard_name')
-        radar.sweep_mode.pop('standard_name')
+        radar.sweep_number.pop("standard_name")
+        radar.fixed_angle.pop("standard_name")
+        radar.sweep_mode.pop("standard_name")
     except Exception:
         pass
 
-    good_keys = ['corrected_reflectivity', 'total_power', 'radar_estimated_rain_rate', 'corrected_velocity']
+    good_keys = ["corrected_reflectivity", "total_power", "radar_estimated_rain_rate", "corrected_velocity"]
     for k in radar.fields.keys():
         if k not in good_keys:
             try:
-                radar.fields[k].pop('standard_name')
+                radar.fields[k].pop("standard_name")
             except Exception:
                 continue
 
     try:
-        radar.fields['velocity']['standard_name'] = 'radial_velocity_of_scatterers_away_from_instrument'
-        radar.fields['velocity']['long_name'] = 'Doppler radial velocity of scatterers away from instrument'
+        radar.fields["velocity"]["standard_name"] = "radial_velocity_of_scatterers_away_from_instrument"
+        radar.fields["velocity"]["long_name"] = "Doppler radial velocity of scatterers away from instrument"
     except KeyError:
         pass
 
-    radar.latitude['standard_name'] = 'latitude'
-    radar.longitude['standard_name'] = 'longitude'
-    radar.altitude['standard_name'] = 'altitude'
+    radar.latitude["standard_name"] = "latitude"
+    radar.longitude["standard_name"] = "longitude"
+    radar.altitude["standard_name"] = "altitude"
 
     return None
 
 
-def correct_zdr(radar, zdr_name='ZDR', snr_name='SNR'):
+def correct_zdr(radar, zdr_name="ZDR", snr_name="SNR"):
     """
     Correct differential reflectivity (ZDR) from noise. From the Schuur et al.
     2003 NOAA report (p7 eq 6)
@@ -177,8 +177,8 @@ def correct_zdr(radar, zdr_name='ZDR', snr_name='SNR'):
         corr_zdr: array
             Corrected differential reflectivity.
     """
-    zdr = radar.fields[zdr_name]['data'].copy()
-    snr = radar.fields[snr_name]['data'].copy()
+    zdr = radar.fields[zdr_name]["data"].copy()
+    snr = radar.fields[snr_name]["data"].copy()
     alpha = 1.48
     natural_zdr = 10 ** (0.1 * zdr)
     natural_snr = 10 ** (0.1 * snr)
@@ -196,24 +196,24 @@ def coverage_content_type(radar):
     radar: Radar object
         Py-ART data structure.
     """
-    radar.range['coverage_content_type'] = 'coordinate'
-    radar.azimuth['coverage_content_type'] = 'coordinate'
-    radar.elevation['coverage_content_type'] = 'coordinate'
-    radar.latitude['coverage_content_type'] = 'coordinate'
-    radar.longitude['coverage_content_type'] = 'coordinate'
-    radar.altitude['coverage_content_type'] = 'coordinate'
+    radar.range["coverage_content_type"] = "coordinate"
+    radar.azimuth["coverage_content_type"] = "coordinate"
+    radar.elevation["coverage_content_type"] = "coordinate"
+    radar.latitude["coverage_content_type"] = "coordinate"
+    radar.longitude["coverage_content_type"] = "coordinate"
+    radar.altitude["coverage_content_type"] = "coordinate"
 
-    radar.sweep_number['coverage_content_type'] = 'auxiliaryInformation'
-    radar.fixed_angle['coverage_content_type'] = 'auxiliaryInformation'
-    radar.sweep_mode['coverage_content_type'] = 'auxiliaryInformation'
+    radar.sweep_number["coverage_content_type"] = "auxiliaryInformation"
+    radar.fixed_angle["coverage_content_type"] = "auxiliaryInformation"
+    radar.sweep_mode["coverage_content_type"] = "auxiliaryInformation"
 
     for k in radar.fields.keys():
-        if k == 'radar_echo_classification':
-            radar.fields[k]['coverage_content_type'] = 'thematicClassification'
-        elif k in ['normalized_coherent_power', 'normalized_coherent_power_v']:
-            radar.fields[k]['coverage_content_type'] = 'qualityInformation'
+        if k == "radar_echo_classification":
+            radar.fields[k]["coverage_content_type"] = "thematicClassification"
+        elif k in ["normalized_coherent_power", "normalized_coherent_power_v"]:
+            radar.fields[k]["coverage_content_type"] = "qualityInformation"
         else:
-            radar.fields[k]['coverage_content_type'] = 'physicalMeasurement'
+            radar.fields[k]["coverage_content_type"] = "physicalMeasurement"
 
     return None
 
@@ -233,27 +233,29 @@ def read_radar(radar_file_name):
         Py-ART radar structure.
     """
     # Read the input radar file.
-    if '.nc' in radar_file_name:
+    if ".nc" in radar_file_name:
         radar = pyart.io.read(radar_file_name)
-        myfields = [('UH', 'DBZ'),
-                    ('DBZH', 'DBZ_CORR_ORIG'),
-                    ('NCPH', 'NCP'),
-                    ('SNRHC', 'SNR'),
-                    ('VELH', 'VEL'),
-                    ('WIDTHH', 'WIDTH'),
-                    ]
+        myfields = [
+            ("UH", "DBZ"),
+            ("DBZH", "DBZ_CORR_ORIG"),
+            ("NCPH", "NCP"),
+            ("SNRHC", "SNR"),
+            ("VELH", "VEL"),
+            ("WIDTHH", "WIDTH"),
+        ]
     else:
         radar = pyart.aux_io.read_odim_h5(radar_file_name, file_field_names=False)
-        myfields = [('normalized_coherent_power', "NCP"),
-                    ('reflectivity', "DBZ_CORR_ORIG"),
-                    ('spectrum_width', "WIDTH"),
-                    ('total_power', "DBZ"),
-                    ("differential_reflectivity", "ZDR"),
-                    ('velocity', "VEL"),
-                    ('signal_to_noise_ratio', "SNR"),
-                    ("cross_correlation_ratio", "RHOHV"),
-                    ("differential_phase", "PHIDP"),
-                    ]
+        myfields = [
+            ("normalized_coherent_power", "NCP"),
+            ("reflectivity", "DBZ_CORR_ORIG"),
+            ("spectrum_width", "WIDTH"),
+            ("total_power", "DBZ"),
+            ("differential_reflectivity", "ZDR"),
+            ("velocity", "VEL"),
+            ("signal_to_noise_ratio", "SNR"),
+            ("cross_correlation_ratio", "RHOHV"),
+            ("differential_phase", "PHIDP"),
+        ]
 
     for mykey, newkey in myfields:
         try:
@@ -261,7 +263,7 @@ def read_radar(radar_file_name):
         except Exception:
             continue
 
-    radar.fields['VEL']['units'] = "m s-1"
+    radar.fields["VEL"]["units"] = "m s-1"
     return radar
 
 
@@ -282,34 +284,37 @@ def temperature_profile(radar):
     temp_info_dict: dict
         Temperature in Celsius, interpolated at each radar gates.
     """
-    grlat = radar.latitude['data'][0]
-    grlon = radar.longitude['data'][0]
-    dtime = pd.Timestamp(cftime.num2pydate(radar.time['data'][0], radar.time['units']))
+    grlat = radar.latitude["data"][0]
+    grlon = radar.longitude["data"][0]
+    dtime = pd.Timestamp(cftime.num2pydate(radar.time["data"][0], radar.time["units"]))
 
     year = dtime.year
-    era5 = f'/g/data/rq0/admin/temperature_profiles/era5_data/{year}_openradar_temp_geopot.nc'
+    era5 = f"/g/data/rq0/admin/temperature_profiles/era5_data/{year}_openradar_temp_geopot.nc"
     if not os.path.isfile(era5):
-        raise FileNotFoundError(f'{era5}: no such file for temperature.')
+        raise FileNotFoundError(f"{era5}: no such file for temperature.")
 
     # Getting the temperature
     dset = xr.open_dataset(era5)
-    temp = dset.sel(longitude=grlon, latitude=grlat, time=dtime, method='nearest')
+    temp = dset.sel(longitude=grlon, latitude=grlat, time=dtime, method="nearest")
 
-    #extract data
-    geopot_profile = np.array(temp.z.values / 9.80665) #geopot -> geopotH
+    # extract data
+    geopot_profile = np.array(temp.z.values / 9.80665)  # geopot -> geopotH
     temp_profile = np.array(temp.t.values - 273.15)
 
-    #append surface data using lowest level
-    geopot_profile = np.append(geopot_profile,[0])
+    # append surface data using lowest level
+    geopot_profile = np.append(geopot_profile, [0])
     temp_profile = np.append(temp_profile, temp_profile[-1])
 
     z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temp_profile, geopot_profile, radar)
 
-    temp_info_dict = {'data': temp_dict['data'],  # Switch to celsius.
-                      'long_name': 'Sounding temperature at gate',
-                      'standard_name': 'temperature',
-                      'valid_min': -100, 'valid_max': 100,
-                      'units': 'degrees Celsius',
-                      'comment': 'Radiosounding date: %s' % (dtime.strftime("%Y/%m/%d"))}
+    temp_info_dict = {
+        "data": temp_dict["data"],  # Switch to celsius.
+        "long_name": "Sounding temperature at gate",
+        "standard_name": "temperature",
+        "valid_min": -100,
+        "valid_max": 100,
+        "units": "degrees Celsius",
+        "comment": "Radiosounding date: %s" % (dtime.strftime("%Y/%m/%d")),
+    }
 
     return z_dict, temp_info_dict
