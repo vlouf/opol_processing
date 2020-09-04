@@ -5,7 +5,7 @@ dealiasing, unfolding, hydrometeors calculation, rainfall rate estimation.
 @title: opol_processing
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institution: Monash University and Bureau of Meteorology
-@date: 16/04/2020
+@date: 04/09/2020
 
 .. autosummary::
     :toctree: generated/
@@ -36,7 +36,7 @@ def chunks(l, n):
     From http://stackoverflow.com/a/312464
     """
     for i in range(0, len(l), n):
-        yield l[i:i + n]
+        yield l[i : i + n]
 
 
 def buffer(infile):
@@ -53,10 +53,7 @@ def buffer(infile):
         Path for saving output data.
     """
     try:
-        opol_processing.process_and_save(infile,
-                                         OUTPATH,
-                                         do_dealiasing=DO_DEALIASING,
-                                         use_unravel=USE_UNRAVEL)
+        opol_processing.process_and_save(infile, OUTPATH, do_dealiasing=DO_DEALIASING, use_unravel=USE_UNRAVEL)
     except Exception:
         traceback.print_exc()
 
@@ -64,8 +61,8 @@ def buffer(infile):
 
 
 def main():
-    flist = sorted(glob.glob(os.path.join(INPATH, '**/*.hdf')))
-    print(f'Found {len(flist)} files in {INPATH}')
+    flist = sorted(glob.glob(os.path.join(INPATH, "**/*.hdf")))
+    print(f"Found {len(flist)} files in {INPATH}")
     for fchunk in chunks(flist, 64):
         bag = db.from_sequence(fchunk).map(buffer)
         _ = bag.compute()
@@ -74,31 +71,26 @@ def main():
     return None
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     """
     Global variables definition.
     """
     # Main global variables (Path directories).
-    OUTPATH = '/scratch/kl02/vhl548/opol/'
+    OUTPATH = "/scratch/kl02/vhl548/opol/"
 
     # Parse arguments
-    parser_description =  """Raw radar PPIs processing. It provides Quality
+    parser_description = """Raw radar PPIs processing. It provides Quality
 control, filtering, attenuation correction, dealiasing, unfolding, hydrometeors
 calculation, and rainfall rate estimation."""
     parser = argparse.ArgumentParser(description=parser_description)
     parser.add_argument(
-        '-i',
-        '--input-dir',
-        dest='indir',
-        default=None,
-        type=str,
-        help='Input directory.',
-        required=True)
-    parser.add_argument('--unravel', dest='unravel', action='store_true')
-    parser.add_argument('--no-unravel', dest='unravel', action='store_false')
+        "-i", "--input-dir", dest="indir", default=None, type=str, help="Input directory.", required=True
+    )
+    parser.add_argument("--unravel", dest="unravel", action="store_true")
+    parser.add_argument("--no-unravel", dest="unravel", action="store_false")
     parser.set_defaults(unravel=True)
-    parser.add_argument('--dealias', dest='dealias', action='store_true')
-    parser.add_argument('--no-dealias', dest='dealias', action='store_false')
+    parser.add_argument("--dealias", dest="dealias", action="store_true")
+    parser.add_argument("--no-dealias", dest="dealias", action="store_false")
     parser.set_defaults(dealias=True)
 
     args = parser.parse_args()
@@ -107,5 +99,5 @@ calculation, and rainfall rate estimation."""
     INPATH = args.indir
 
     with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
+        warnings.simplefilter("ignore")
         main()
