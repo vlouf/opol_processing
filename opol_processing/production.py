@@ -71,15 +71,21 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     use_unravel: bool
         Use of UNRAVEL for dealiasing the velocity
     """
+    tick = time.time()
     today = datetime.datetime.utcnow()
 
-    # Create directories.
+    # Create output directories.
     _mkdir(outpath)
     outpath = os.path.join(outpath, "v{}".format(today.strftime("%Y")))
     _mkdir(outpath)
     outpath_ppi = os.path.join(outpath, "ppi")
     _mkdir(outpath_ppi)
-    tick = time.time()
+    try:
+        voyage_directory = radar_file_name.split("/")[-3]
+        outpath_ppi = os.path.join(outpath_ppi, voyage_directory)
+        _mkdir(outpath_ppi)
+    except Exception:
+        pass
 
     # Business start here.
     with warnings.catch_warnings():
@@ -92,9 +98,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
         return None
 
     radar_start_date = cftime.num2pydate(radar.time["data"][0], radar.time["units"])
-    radar_end_date = cftime.num2pydate(radar.time["data"][-1], radar.time["units"])
-    outpath_ppi = os.path.join(outpath_ppi, str(radar_start_date.year))
-    _mkdir(outpath_ppi)
+    radar_end_date = cftime.num2pydate(radar.time["data"][-1], radar.time["units"])    
     outpath_ppi = os.path.join(outpath_ppi, radar_start_date.strftime("%Y%m%d"))
     _mkdir(outpath_ppi)
 
