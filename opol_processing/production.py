@@ -121,8 +121,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
 
     unique_id = str(uuid.uuid4())
     metadata = {
-        "Conventions": "CF-1.6, ACDD-1.3",
-        "acknowledgement": "This work has been supported by the U.S. Department of Energy Atmospheric Systems Research Program through the grant DE-SC0014063. Data may be freely distributed.",
+        "Conventions": "CF-1.6, ACDD-1.3",        
         "country": "Australia",
         "creator_email": "valentin.louf@bom.gov.au",
         "creator_name": "Valentin Louf",
