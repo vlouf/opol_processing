@@ -121,7 +121,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
 
     unique_id = str(uuid.uuid4())
     metadata = {
-        "Conventions": "CF-1.6, ACDD-1.3",        
+        "Conventions": "CF-1.6, ACDD-1.3",
         "country": "Australia",
         "creator_email": "valentin.louf@bom.gov.au",
         "creator_name": "Valentin Louf",
@@ -246,18 +246,24 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     nradar = radar_codes.read_radar(radar_file_name)
     # Correct OceanPOL offset.
-    if nradar.nsweeps <= 1:
-        del nradar
+    if nradar.nsweeps <= 1:        
         return None
 
-    # Correct OPOL ZDR offset.
-    nradar.fields["ZDR"]["data"] += 1.0
+    # Correct time units.
+    if "since " not in nradar.time["units"]:
+        # Signal processing forgot (sometime) a space in generating the unit.
+        nradar.time["units"] = nradar.time["units"].replace("since", "since ")
+    radar_start_date = cftime.num2pydate(nradar.time["data"][0], nradar.time["units"])
 
-    radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
-    del nradar
-    radar.elevation["data"] = radar.elevation["data"] - 0.9
-    # Correct dtype.
-    radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
+    # ZDR and DBZ calibration factor for OCEANPol before YMC experiment (included).
+    if radar_start_date.year <= 2020:
+        nradar.fields["ZDR"]["data"] += 1.0
+        nradar.fields["DBZ"]["data"] += 4.5
+        radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
+        radar.elevation["data"] = radar.elevation["data"] - 0.9
+        radar.elevation["data"] = radar.elevation["data"].astype(np.float32)        
+    else:
+        radar = nradar
 
     # Correct data type manually
     try:
@@ -270,10 +276,6 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     # Check if radar reflecitivity field is correct.
     if not radar_codes.check_reflectivity(radar):
         raise TypeError(f"Reflectivity field is empty in {radar_file_name}.")
-
-    if "since " not in radar.time["units"]:
-        # Signal processing forgot (sometime) a space in generating the unit.
-        radar.time["units"] = radar.time["units"].replace("since", "since ")
 
     # Correct RHOHV
     rho_corr = radar_codes.correct_rhohv(radar)
