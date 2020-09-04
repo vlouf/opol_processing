@@ -1,10 +1,10 @@
 """
-OPOL Level 1b main production line. These are the drivers function.
+OPOL Level 1b driver.
 
+@project: OCEANPol
 @title: production
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
-@copyright: Valentin Louf (2017-2020)
 @institution: Bureau of Meteorology and Monash University
 @date: 04/09/2020
 
@@ -188,8 +188,6 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     ===========
     radar_file_name: str
         Name of the input radar file.
-    is_OPOL: bool
-        Name of radar (only OPOL will change something).
     do_dealiasing: bool
         Dealias velocity.
     use_unravel: bool
@@ -246,7 +244,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     nradar = radar_codes.read_radar(radar_file_name)
     # Correct OceanPOL offset.
-    if nradar.nsweeps <= 1:        
+    if nradar.nsweeps <= 1:
         return None
 
     # Correct time units.
@@ -261,7 +259,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         nradar.fields["DBZ"]["data"] += 4.5
         radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
         radar.elevation["data"] = radar.elevation["data"] - 0.9
-        radar.elevation["data"] = radar.elevation["data"].astype(np.float32)        
+        radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
     else:
         radar = nradar
 
