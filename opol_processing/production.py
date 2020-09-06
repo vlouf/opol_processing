@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 04/09/2020
+@date: 06/09/2020
 
 .. autosummary::
     :toctree: generated/
@@ -74,43 +74,37 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     tick = time.time()
     today = datetime.datetime.utcnow()
 
+    voyage_directory = radar_file_name.split("/")[-3]
+    datestr = radar_file_name.split("/")[-2]
     # Create output directories.
     _mkdir(outpath)
     outpath = os.path.join(outpath, "v{}".format(today.strftime("%Y")))
     _mkdir(outpath)
     outpath_ppi = os.path.join(outpath, "ppi")
     _mkdir(outpath_ppi)
-    try:
-        voyage_directory = radar_file_name.split("/")[-3]
-        outpath_ppi = os.path.join(outpath_ppi, voyage_directory)
-        _mkdir(outpath_ppi)
-    except Exception:
-        pass
+    outpath_ppi = os.path.join(outpath_ppi, voyage_directory)
+    _mkdir(outpath_ppi)
+    outpath_ppi = os.path.join(outpath_ppi, datestr)
+    _mkdir(outpath_ppi)
+
+    # Generate output file name.
+    outfilename = os.path.basename(radar_file_name).replace(".hdf", ".cfradial.nc")
+    outfilename = os.path.join(outpath_ppi, outfilename)
+    # Check if output file already exists.
+    if os.path.isfile(outfilename):
+        print(f"Output file {outfilename} already exists.")
+        return None
 
     # Business start here.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         radar = production_line(radar_file_name, do_dealiasing=do_dealiasing, use_unravel=use_unravel)
-    # Business over.
-
-    if radar is None:
-        print(f"{radar_file_name} has not been processed. Check logs.")
-        return None
+        if radar is None:
+            print(f"{radar_file_name} has not been processed. Check logs.")
+            return None
 
     radar_start_date = cftime.num2pydate(radar.time["data"][0], radar.time["units"])
-    radar_end_date = cftime.num2pydate(radar.time["data"][-1], radar.time["units"])    
-    outpath_ppi = os.path.join(outpath_ppi, radar_start_date.strftime("%Y%m%d"))
-    _mkdir(outpath_ppi)
-
-    # Generate output file name.
-    # outfilename = "rvi6opolppi.b1.{}.nc".format(radar_start_date.strftime("%Y%m%d.%H%M%S"))
-    outfilename = os.path.basename(radar_file_name).replace(".hdf", ".cfradial.nc")
-    outfilename = os.path.join(outpath_ppi, outfilename)
-
-    # Check if output file already exists.
-    if os.path.isfile(outfilename):
-        print(f"Output file {outfilename} already exists.")
-        return None
+    radar_end_date = cftime.num2pydate(radar.time["data"][-1], radar.time["units"])
 
     # Lat/lon informations
     latitude = radar.gate_latitude["data"]
