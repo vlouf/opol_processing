@@ -19,7 +19,6 @@ OPOL Level 1b driver.
 import gc
 import os
 import copy
-import time
 import uuid
 import datetime
 import traceback
@@ -56,7 +55,7 @@ def _mkdir(dir):
     return None
 
 
-def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=True, debug=False):
+def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=True):
     """
     Call processing function and write data.
 
@@ -70,8 +69,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
         Dealias velocity.
     use_unravel: bool
         Use of UNRAVEL for dealiasing the velocity
-    """
-    tick = time.time()
+    """    
     today = datetime.datetime.utcnow()
 
     voyage_directory = radar_file_name.split("/")[-3]
@@ -164,14 +162,11 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     radar.metadata = metadata
 
     # Write results
-    pyart.io.write_cfradial(outfilename, radar, format="NETCDF4")
-    if debug:
-        print("%s processed in  %0.2fs." % (os.path.basename(radar_file_name), (time.time() - tick)))
+    pyart.io.write_cfradial(outfilename, radar, format="NETCDF4")    
 
     # Free memory
     del radar
     gc.collect()
-
     return None
 
 
