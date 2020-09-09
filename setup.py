@@ -12,7 +12,7 @@ NAME = "opol_processing"
 DESCRIPTION = """Radar PPIs data processing, quality control, filtering, attenuation
 correction, dealiasing, unfolding, hydrometeors calculation, rainfall rate estimation."""
 URL = "https://github.com/vlouf/opol_processing"
-EMAIL = "valentin.louf@monash.edu"
+EMAIL = "valentin.louf@bom.gov.au"
 AUTHOR = "Valentin Louf"
 
 # What packages are required for this module to be executed?

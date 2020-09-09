@@ -1,7 +1,7 @@
 """
 Codes for estimating various parameters related to Hydrometeors.
 @title: hydrometeors
-@author: Valentin Louf <valentin.louf@monash.edu>
+@author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
 @date: 04/09/2020
 

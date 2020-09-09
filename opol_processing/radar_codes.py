@@ -2,7 +2,7 @@
 Codes for correcting and estimating various radar and meteorological parameters.
 
 @title: radar_codes
-@author: Valentin Louf <valentin.louf@monash.edu>
+@author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
 @date: 04/09/2020
 

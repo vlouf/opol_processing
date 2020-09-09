@@ -3,7 +3,7 @@ Codes for creating and manipulating gate filters. New functions: use of trained
 Gaussian Mixture Models to remove noise and clutter from CPOL data before 2009.
 
 @title: filtering
-@author: Valentin Louf <valentin.louf@monash.edu>
+@author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
 @date: 04/09/2020
 
