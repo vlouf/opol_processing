@@ -11,9 +11,10 @@ import h5py
 import pyart
 import pyodim
 import numpy as np
-import dask
-import dask.bag as db
 import opol_processing
+
+from concurrent.futures import TimeoutError
+from pebble import ProcessPool, ProcessExpired
 
 
 def chunks(l, n: int):
@@ -176,11 +177,24 @@ def main() -> None:
     flist = sorted(glob.glob(os.path.join(INPATH, "*.hdf")))
     if len(flist) == 0:
         raise FileNotFoundError(f"No file found in {INPATH}")
-
     print(f"Found {len(flist)} files in {INPATH}")
-    for fchunk in chunks(flist, 64):
-        bag = db.from_sequence(fchunk).map(buffer)
-        _ = bag.compute()
+
+    for flist_chunk in chunks(flist, 24):
+        with ProcessPool() as pool:
+            future = pool.map(buffer, flist_chunk, timeout=600)
+            iterator = future.result()
+
+            while True:
+                try:
+                    _ = next(iterator)
+                except StopIteration:
+                    break
+                except TimeoutError as error:
+                    print("function took longer than %d seconds" % error.args[1])
+                except ProcessExpired as error:
+                    print("%s. Exit code: %d" % (error, error.exitcode))
+                except Exception:
+                    traceback.print_exc()
 
     return None
 
