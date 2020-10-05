@@ -16,7 +16,7 @@ import dask.bag as db
 import opol_processing
 
 
-def chunks(l, n):
+def chunks(l, n: int):
     """
     Yield successive n-sized chunks from l.
     From http://stackoverflow.com/a/312464
@@ -55,7 +55,7 @@ def coord_from_metadata(metadata):
     return r, azimuth, elev
 
 
-def get_dataset_metadata(hfile, dataset="dataset1"):
+def get_dataset_metadata(hfile: str, dataset: str="dataset1"):
     """
     Get the dataset metadata of the ODIM H5 file.
     Parameters:
@@ -103,14 +103,28 @@ def get_dataset_metadata(hfile, dataset="dataset1"):
     return metadata, coordinates_metadata
 
 
-def _to_str(t):
+def _to_str(t) -> str:
     """
     Transform binary into string.
     """
     return t.decode("utf-8")
 
 
-def cleanup_ppi(infile):
+def cleanup_ppi(infile: str) -> str:
+    """
+    Copy input file in tmp directory and removed all the surveillance sweeps
+    from the ODIM h5 file.
+
+    Parameters:
+    ===========
+    infile: str
+        Input ODIM h5 file
+
+    Returns:
+    ========
+    filename: str
+        Path to the cleaned up file.
+    """
     fname = os.path.basename(infile)
     filename = os.path.join(TMPDIR, fname)
     shutil.copy(infile, filename)
@@ -134,7 +148,7 @@ def cleanup_ppi(infile):
     return filename
 
 
-def buffer(infile):
+def buffer(infile: str) -> None:
     """
     It calls the production line and manages it. Buffer function that is used
     to catch any problem with the processing line without screwing the whole
@@ -158,13 +172,15 @@ def buffer(infile):
     return None
 
 
-def main():
-    flist = sorted(glob.glob(os.path.join(INPATH, "**/*.hdf")))
+def main() -> None:
+    flist = sorted(glob.glob(os.path.join(INPATH, "*.hdf")))
+    if len(flist) == 0:
+        raise FileNotFoundError(f"No file found in {INPATH}")
+
     print(f"Found {len(flist)} files in {INPATH}")
     for fchunk in chunks(flist, 64):
         bag = db.from_sequence(fchunk).map(buffer)
         _ = bag.compute()
-        del bag
 
     return None
 
