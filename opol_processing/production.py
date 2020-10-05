@@ -18,6 +18,7 @@ OPOL Level 1b driver.
 # Python Standard Library
 import gc
 import os
+import re
 import copy
 import uuid
 import datetime
@@ -73,7 +74,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     today = datetime.datetime.utcnow()
 
     voyage_directory = radar_file_name.split("/")[-3]
-    datestr = radar_file_name.split("/")[-2]
+    datestr = re.findall("[0-9]{8}", os.path.basename(radar_file_name))[0]
     # Create output directories.
     _mkdir(outpath)
     outpath = os.path.join(outpath, "v{}".format(today.strftime("%Y")))
