@@ -15,6 +15,7 @@ Codes for correcting and estimating various radar and meteorological parameters.
     correct_zdr
     read_radar
     read_era5_temperature
+    set_significant_digits
     temperature_profile
 """
 # Python Standard Library
@@ -313,6 +314,45 @@ def read_era5_temperature(date, longitude: float, latitude: float):
     return z, temperature
 
 
+def set_significant_digits(radar) -> None:
+    """
+    Set _Least_significant_digit netcdf attribute.
+    """
+    fieldnames = [
+        ("VEL", 2),
+        ("VEL_UNFOLDED", 2),
+        ("DBZ", 2),
+        ("DBZ_CORR", 2),
+        ("DBZ_CORR_ORIG", 2),
+        ("RHOHV_CORR", 2),
+        ("ZDR", 2),
+        ("ZDR_CORR_ATTEN", 2),
+        ("PHIDP", 4),
+        ("PHIDP_BRINGI", 4),
+        ("PHIDP_GG", 4),
+        ("PHIDP_VAL", 4),
+        ("KDP", 4),
+        ("KDP_BRINGI", 4),
+        ("KDP_GG", 4),
+        ("KDP_VAL", 4),
+        ("WIDTH", 4),
+        ("SNR", 2),
+        ("NCP", 2),
+        ("DBZV", 2),
+        ("WRADV", 2),
+        ("SNRV", 2),
+        ("SQIV", 2),
+    ]
+    # Change the temporary working name of fields to the one define by the user.
+    for key, value in fieldnames:
+        try:
+            radar.fields[key]["_Least_significant_digit"] = value
+        except KeyError:
+            continue
+
+    return None
+
+
 def temperature_profile(radar):
     """
     Compute the signal-to-noise ratio as well as interpolating the radiosounding
@@ -341,6 +381,7 @@ def temperature_profile(radar):
     temp_profile = np.append(temp_profile, temp_profile[-1])
 
     z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temp_profile, geopot_profile, radar)
+    temp_dict['data'] = temp_dict['data'].astype(np.float32)
 
     temp_info_dict = {
         "data": temp_dict["data"],  # Switch to celsius.
@@ -349,6 +390,7 @@ def temperature_profile(radar):
         "valid_min": -100,
         "valid_max": 100,
         "units": "degrees Celsius",
+        "_Least_significant_digit": 1,
         "comment": "ERA5 data date: %s" % (dtime.strftime("%Y/%m/%d")),
     }
 

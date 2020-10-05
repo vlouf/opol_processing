@@ -324,7 +324,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
             radar.fields.pop(obsolete_key)
         except KeyError:
             continue
-
+    
+    radar_codes.set_significant_digits(radar)
     # Change the temporary working name of fields to the one define by the user.
     for old_key, new_key in FIELDS_NAMES:
         try:
