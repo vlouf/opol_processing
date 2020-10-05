@@ -53,7 +53,7 @@ def _nearest(items, pivot):
     return min(items, key=lambda x: abs(x - pivot))
 
 
-def check_reflectivity(radar, refl_field_name="DBZ"):
+def check_reflectivity(radar, refl_field_name: str = "DBZ") -> bool:
     """
     Checking if radar has a proper reflectivity field.  It's a minor problem
     concerning a few days in 2011 for CPOL.
@@ -79,7 +79,7 @@ def check_reflectivity(radar, refl_field_name="DBZ"):
     return True
 
 
-def correct_rhohv(radar, rhohv_name="RHOHV", snr_name="SNR"):
+def correct_rhohv(radar, rhohv_name: str = "RHOHV", snr_name: str = "SNR"):
     """
     Correct cross correlation ratio (RHOHV) from noise. From the Schuur et al.
     2003 NOAA report (p7 eq 5)
@@ -115,7 +115,7 @@ def correct_rhohv(radar, rhohv_name="RHOHV", snr_name="SNR"):
     return rho_corr
 
 
-def correct_standard_name(radar):
+def correct_standard_name(radar) -> None:
     """
     'standard_name' is a protected keyword for metadata in the CF conventions.
     To respect the CF conventions we can only use the standard_name field that
@@ -161,7 +161,7 @@ def correct_standard_name(radar):
     return None
 
 
-def correct_zdr(radar, zdr_name="ZDR", snr_name="SNR"):
+def correct_zdr(radar, zdr_name: str = "ZDR", snr_name: str = "SNR"):
     """
     Correct differential reflectivity (ZDR) from noise. From the Schuur et al.
     2003 NOAA report (p7 eq 6)
@@ -190,7 +190,7 @@ def correct_zdr(radar, zdr_name="ZDR", snr_name="SNR"):
     return corr_zdr
 
 
-def coverage_content_type(radar):
+def coverage_content_type(radar) -> None:
     """
     Adding metadata for compatibility with ACDD-1.3
 
@@ -305,7 +305,7 @@ def read_era5_temperature(date, longitude: float, latitude: float):
 
     # Get temperature
     dset = xr.open_dataset(era5_file)
-    nset = dset.sel(longitude=longitude, latitude=latitude, time=date, method='nearest')
+    nset = dset.sel(longitude=longitude, latitude=latitude, time=date, method="nearest")
     temperature = nset.t.values
     level = nset.level.values
     z = -2494.3 / 0.218 * np.log(level / 1013.15)
