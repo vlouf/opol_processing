@@ -4,7 +4,7 @@ Codes for correcting and estimating various radar and meteorological parameters.
 @title: radar_codes
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 04/09/2020
+@date: 04/10/2020
 
 .. autosummary::
     :toctree: generated/
@@ -14,12 +14,15 @@ Codes for correcting and estimating various radar and meteorological parameters.
     correct_rhohv
     correct_zdr
     read_radar
+    read_era5_temperature
+    temperature_profile
 """
 # Python Standard Library
 import os
 import re
 import glob
 import time
+import calendar
 import datetime
 
 # Other Libraries
@@ -218,7 +221,7 @@ def coverage_content_type(radar):
     return None
 
 
-def read_radar(radar_file_name):
+def read_radar(radar_file_name: str):
     """
     Read the input radar file.
 
@@ -267,6 +270,49 @@ def read_radar(radar_file_name):
     return radar
 
 
+def read_era5_temperature(date, longitude: float, latitude: float):
+    """
+    Extract the temperature profile from ERA5 data for a given date, longitude
+    and latitude.
+
+    Parameters:
+    ===========
+    date: pd.Timestamp
+        Date for extraction.
+    longitude: float
+        Radar longitude
+    latitude: float
+        Radar latitude.
+
+    Returns:
+    ========
+    z: ndarray
+        Height in m
+    temperature: ndarray
+        Temperature in K.
+    """
+    # Generate filename.
+    era5_dir = "/g/data/ub4/era5/netcdf/pressure/t/"
+    month = date.month
+    year = date.year
+    lastday = calendar.monthrange(year, month)[1]
+    sdate = f"{year}{month:02}01"
+    edate = f"{year}{month:02}{lastday}"
+    era5_file = os.path.join(era5_dir, str(year), f"t_era5_aus_{sdate}_{edate}.nc")
+
+    if not os.path.isfile(era5_file):
+        raise FileNotFoundError(f"{era5_file} not found.")
+
+    # Get temperature
+    dset = xr.open_dataset(era5_file)
+    nset = dset.sel(longitude=longitude, latitude=latitude, time=date, method='nearest')
+    temperature = nset.t.values
+    level = nset.level.values
+    z = -2494.3 / 0.218 * np.log(level / 1013.15)
+
+    return z, temperature
+
+
 def temperature_profile(radar):
     """
     Compute the signal-to-noise ratio as well as interpolating the radiosounding
@@ -288,18 +334,7 @@ def temperature_profile(radar):
     grlon = radar.longitude["data"][0]
     dtime = pd.Timestamp(cftime.num2pydate(radar.time["data"][0], radar.time["units"]))
 
-    year = dtime.year
-    era5 = f"/g/data/rq0/admin/temperature_profiles/era5_data/{year}_openradar_temp_geopot.nc"
-    if not os.path.isfile(era5):
-        raise FileNotFoundError(f"{era5}: no such file for temperature.")
-
-    # Getting the temperature
-    dset = xr.open_dataset(era5)
-    temp = dset.sel(longitude=grlon, latitude=grlat, time=dtime, method="nearest")
-
-    # extract data
-    geopot_profile = np.array(temp.z.values / 9.80665)  # geopot -> geopotH
-    temp_profile = np.array(temp.t.values - 273.15)
+    geopot_profile, temp_profile = read_era5_temperature(dtime, grlon, grlat)
 
     # append surface data using lowest level
     geopot_profile = np.append(geopot_profile, [0])
@@ -314,7 +349,7 @@ def temperature_profile(radar):
         "valid_min": -100,
         "valid_max": 100,
         "units": "degrees Celsius",
-        "comment": "Radiosounding date: %s" % (dtime.strftime("%Y/%m/%d")),
+        "comment": "ERA5 data date: %s" % (dtime.strftime("%Y/%m/%d")),
     }
 
     return z_dict, temp_info_dict
