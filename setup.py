@@ -66,6 +66,7 @@ setup(
     author=AUTHOR,
     author_email=EMAIL,
     url=URL,
+    install_requires=["numpy", "scikit-learn<0.24"],
     packages=find_packages(exclude=["contrib", "docs", "tests"]),
     package_data={"opol_processing": ["data/GM_model_radar_metechoes.pkl.gz"]},
     install_requires=REQUIRED,
