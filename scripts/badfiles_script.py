@@ -179,7 +179,7 @@ def main() -> None:
         raise FileNotFoundError(f"No file found in {INPATH}")
     print(f"Found {len(flist)} files in {INPATH}")
 
-    for flist_chunk in chunks(flist, 24):
+    for flist_chunk in chunks(flist, 16):
         with ProcessPool() as pool:
             future = pool.map(buffer, flist_chunk, timeout=600)
             iterator = future.result()

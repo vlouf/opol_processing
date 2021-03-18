@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 06/09/2020
+@date: 16/03/2021
 
 .. autosummary::
     :toctree: generated/
@@ -22,13 +22,11 @@ import re
 import copy
 import uuid
 import datetime
-import traceback
 import warnings
 
 # Other Libraries
 import pyart
 import cftime
-import netCDF4
 import numpy as np
 
 # Custom modules.
@@ -37,7 +35,6 @@ from . import filtering
 from . import hydrometeors
 from . import phase
 from . import radar_codes
-from . import velocity
 
 
 def _mkdir(dir):
@@ -70,7 +67,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
         Dealias velocity.
     use_unravel: bool
         Use of UNRAVEL for dealiasing the velocity
-    """    
+    """
     today = datetime.datetime.utcnow()
 
     voyage_directory = radar_file_name.split("/")[-3]
@@ -163,7 +160,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     radar.metadata = metadata
 
     # Write results
-    pyart.io.write_cfradial(outfilename, radar, format="NETCDF4")    
+    pyart.io.write_cfradial(outfilename, radar, format="NETCDF4")
 
     # Free memory
     del radar
@@ -250,7 +247,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     # ZDR and DBZ calibration factor for OCEANPol before YMC experiment (included).
     if radar_start_date.year <= 2020:
         nradar.fields["ZDR"]["data"] += 1.0
-        nradar.fields["DBZ"]["data"] += 4.5
+        nradar.fields["DBZ"]["data"] += 2.5
         radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
         radar.elevation["data"] = radar.elevation["data"] - 0.9
         radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
@@ -296,7 +293,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     # Unfold VELOCITY
     if do_dealiasing:
-        vdop_unfold = velocity.unravel(radar, gatefilter)
+        vdop_unfold = radar_codes.unravel(radar, gatefilter)
         radar.add_field("VEL_UNFOLDED", vdop_unfold, replace_existing=True)
 
     # Correct attenuation ZH and ZDR and hardcode gatefilter
@@ -325,7 +322,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
             radar.fields.pop(obsolete_key)
         except KeyError:
             continue
-    
+
     radar_codes.set_significant_digits(radar)
     # Change the temporary working name of fields to the one define by the user.
     for old_key, new_key in FIELDS_NAMES:
