@@ -16,7 +16,7 @@ EMAIL = "valentin.louf@bom.gov.au"
 AUTHOR = "Valentin Louf"
 
 # What packages are required for this module to be executed?
-REQUIRED = ["arm_pyart", "numpy", "csu_radartools", "crayons", "netCDF4", "scipy", "unravel"]
+REQUIRED = ["arm_pyart", "numpy", "csu_radartools", "crayons", "netCDF4", "scipy", "unravel", "scikit-learn<0.24"]
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -65,8 +65,7 @@ setup(
     long_description_content_type="text/markdown",
     author=AUTHOR,
     author_email=EMAIL,
-    url=URL,
-    install_requires=["numpy", "scikit-learn<0.24"],
+    url=URL,    
     packages=find_packages(exclude=["contrib", "docs", "tests"]),
     package_data={"opol_processing": ["data/GM_model_radar_metechoes.pkl.gz"]},
     install_requires=REQUIRED,
