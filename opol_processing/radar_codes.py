@@ -4,7 +4,7 @@ Codes for correcting and estimating various radar and meteorological parameters.
 @title: radar_codes
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 16/03/2021
+@date: 24/03/2021
 
 .. autosummary::
     :toctree: generated/
@@ -21,16 +21,11 @@ Codes for correcting and estimating various radar and meteorological parameters.
 """
 # Python Standard Library
 import os
-import re
-import glob
-import time
 import calendar
-import datetime
 
 # Other Libraries
 import pyart
 import cftime
-import netCDF4
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -268,7 +263,11 @@ def read_radar(radar_file_name: str):
         except Exception:
             continue
 
-    radar.fields["VEL"]["units"] = "m s-1"
+    try:
+        radar.fields["VEL"]["units"] = "m s-1"
+    except Exception:
+        pass
+
     return radar
 
 

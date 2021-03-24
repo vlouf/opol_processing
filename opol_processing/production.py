@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 16/03/2021
+@date: 24/03/2021
 
 .. autosummary::
     :toctree: generated/
@@ -235,7 +235,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     nradar = radar_codes.read_radar(radar_file_name)
     # Correct OceanPOL offset.
-    if nradar.nsweeps <= 1:
+    if nradar.nsweeps < 10:
         return None
 
     # Correct time units.
@@ -253,6 +253,11 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
     else:
         radar = nradar
+
+    try:
+        _ = radar.fields['VEL']
+    except KeyError:
+        do_dealiasing = False
 
     # Correct data type manually
     try:
