@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 24/03/2021
+@date: 25/03/2021
 
 .. autosummary::
     :toctree: generated/
@@ -117,9 +117,9 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     metadata = {
         "Conventions": "CF-1.6, ACDD-1.3",
         "country": "Australia",
-        "creator_email": "valentin.louf@bom.gov.au",
-        "creator_name": "Valentin Louf",
-        "creator_url": "github.com/vlouf",
+        "creator_email": "CPOL-support@bom.gov.au",
+        "creator_name": "Commonwealth of Australia, Bureau of Meteorology, Science and Innovation, Research, Weather and Environmental Prediction, Radar Science and Nowcasting",
+        "creator_url": "http://www.bom.gov.au/australia/radar/",
         "date_created": today.isoformat(),
         "geospatial_bounds": f"POLYGON(({minlon:0.6} {minlat:0.6},{minlon:0.6} {maxlat:0.6},{maxlon:0.6} {maxlat:0.6},{maxlon:0.6} {minlat:0.6},{minlon:0.6} {minlat:0.6}))",
         "geospatial_lat_max": f"{maxlat:0.6}",
