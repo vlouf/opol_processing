@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 25/03/2021
+@date: 29/03/2021
 
 .. autosummary::
     :toctree: generated/
@@ -253,6 +253,10 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
     else:
         radar = nradar
+
+    # Masking the 4 first gates cause they contain only rubbish data.
+    for k in radar.fields.keys():
+        radar.fields[k]['data'][:, :4] = np.NaN
 
     try:
         _ = radar.fields['VEL']
