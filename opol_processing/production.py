@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 29/03/2021
+@date: 30/03/2021
 
 .. autosummary::
     :toctree: generated/
@@ -119,7 +119,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
         "country": "Australia",
         "creator_email": "CPOL-support@bom.gov.au",
         "creator_name": "Commonwealth of Australia, Bureau of Meteorology, Science and Innovation, Research, Weather and Environmental Prediction, Radar Science and Nowcasting",
-        "creator_url": "http://www.bom.gov.au/australia/radar/",
+        "creator_url": "https://bom365.sharepoint.com/sites/SI_WEP_RSAN",
         "date_created": today.isoformat(),
         "geospatial_bounds": f"POLYGON(({minlon:0.6} {minlat:0.6},{minlon:0.6} {maxlat:0.6},{maxlon:0.6} {maxlat:0.6},{maxlon:0.6} {minlat:0.6},{minlon:0.6} {minlat:0.6}))",
         "geospatial_lat_max": f"{maxlat:0.6}",
@@ -134,14 +134,15 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
         "instrument": "radar",
         "instrument_name": "OPOL",
         "instrument_type": "radar",
-        "keywords": "radar, Doppler, dual-polarization, shipborne",
+        "keywords": "R/V INVESTIGATOR, POLARIMETRIC RADAR, C-BAND RADAR",
+        "keywords_vocabulary": "NASA Global Change Master Directory (GCMD) Science Keywords",
         "license": "CC BY-NC-SA 4.0",
-        "naming_authority": "au.org.nci",
+        "naming_authority": "au.gov.bom",
         "origin_altitude": origin_altitude,
         "origin_latitude": origin_latitude,
         "origin_longitude": origin_longitude,
         "platform_is_mobile": "true",
-        "processing_level": "b1",
+        "processing_level": "L2",
         "project": "OPOL",
         "publisher_name": "NCI",
         "publisher_url": "nci.gov.au",
@@ -254,9 +255,10 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     else:
         radar = nradar
 
-    # Masking the 4 first gates cause they contain only rubbish data.
+    # Masking the 3 km cause they contain only rubbish data.
+    pos = radar.range['data'] < 3e3
     for k in radar.fields.keys():
-        radar.fields[k]['data'][:, :4] = np.NaN
+        radar.fields[k]['data'][:, pos] = np.NaN
 
     try:
         _ = radar.fields['VEL']
