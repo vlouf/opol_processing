@@ -4,7 +4,7 @@ Codes for correcting and estimating various radar and meteorological parameters.
 @title: radar_codes
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 24/03/2021
+@date: 14/05/2021
 
 .. autosummary::
     :toctree: generated/
@@ -21,7 +21,7 @@ Codes for correcting and estimating various radar and meteorological parameters.
 """
 # Python Standard Library
 import os
-import calendar
+import glob
 
 # Other Libraries
 import pyart
@@ -293,13 +293,11 @@ def read_era5_temperature(date, longitude: float, latitude: float):
         Temperature in K.
     """
     # Generate filename.
-    era5_dir = "/g/data/ub4/era5/netcdf/pressure/t/"
-    month = date.month
-    year = date.year
-    lastday = calendar.monthrange(year, month)[1]
-    sdate = f"{year}{month:02}01"
-    edate = f"{year}{month:02}{lastday}"
-    era5_file = os.path.join(era5_dir, str(year), f"t_era5_aus_{sdate}_{edate}.nc")
+    era5_root = "/g/data/rt52/era5/pressure-levels/reanalysis/"
+    # Build file paths
+    month_str = date.month
+    year_str = date.year
+    era5_file = glob.glob(f"{era5_root}/t/{year_str}/t_era5_oper_pl_{year_str}{month_str:02}*.nc")[0]
 
     if not os.path.isfile(era5_file):
         raise FileNotFoundError(f"{era5_file} not found.")
@@ -381,7 +379,7 @@ def temperature_profile(radar):
     temp_profile = np.append(temp_profile, temp_profile[-1])
 
     z_dict, temp_dict = pyart.retrieve.map_profile_to_gates(temp_profile, geopot_profile, radar)
-    temp_dict['data'] = temp_dict['data'].astype(np.float32)
+    temp_dict["data"] = temp_dict["data"].astype(np.float32)
 
     temp_info_dict = {
         "data": temp_dict["data"],  # Switch to celsius.
