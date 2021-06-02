@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 30/03/2021
+@date: 03/06/2021
 
 .. autosummary::
     :toctree: generated/
@@ -74,11 +74,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     datestr = re.findall("[0-9]{8}", os.path.basename(radar_file_name))[0]
     # Create output directories.
     _mkdir(outpath)
-    outpath = os.path.join(outpath, "v{}".format(today.strftime("%Y")))
-    _mkdir(outpath)
     outpath_ppi = os.path.join(outpath, "ppi")
-    _mkdir(outpath_ppi)
-    outpath_ppi = os.path.join(outpath_ppi, voyage_directory)
     _mkdir(outpath_ppi)
     outpath_ppi = os.path.join(outpath_ppi, datestr)
     _mkdir(outpath_ppi)
@@ -255,11 +251,6 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     else:
         radar = nradar
 
-    # Masking the 3 km cause they contain only rubbish data.
-    pos = radar.range['data'] < 3e3
-    for k in radar.fields.keys():
-        radar.fields[k]['data'][:, pos] = np.NaN
-
     try:
         _ = radar.fields['VEL']
     except KeyError:
@@ -296,7 +287,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     )
     radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
-    phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
+    phidp, kdp = phase.phidp_bringi(radar, gatefilter)
     radar.add_field("PHIDP_VAL", phidp)
     radar.add_field("KDP_VAL", kdp)
     phidp_field_name = "PHIDP_VAL"

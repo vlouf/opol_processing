@@ -4,7 +4,7 @@ Codes for correcting the differential phase and estimating KDP.
 @title: phase
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 04/09/2020
+@date: 02/06/2021
 
 .. autosummary::
     :toctree: generated/
@@ -72,14 +72,10 @@ def phidp_bringi(radar, gatefilter, unfold_phidp_name="PHI_UNF", refl_field="DBZ
     kdpb: ndarray
         Bringi specific differential phase array.
     """
+    nphase = pyart.correct.phase_proc.det_sys_phase_gf(radar, gatefilter, phidp_field=unfold_phidp_name, first_gate=30)    
     dp = radar.fields[unfold_phidp_name]["data"].copy()
+    dp -= nphase
     dz = radar.fields[refl_field]["data"].copy().filled(-9999)
-
-    try:
-        if np.nanmean(dp[gatefilter.gate_included]) < 0:
-            dp += 90
-    except ValueError:
-        pass
 
     # Extract dimensions
     rng = radar.range["data"]
