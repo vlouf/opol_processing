@@ -50,7 +50,7 @@ def _fix_phidp_from_kdp(phidp, kdp, r, gatefilter):
     return phidp, kdp
 
 
-def phidp_bringi(radar, gatefilter, unfold_phidp_name="PHI_UNF", refl_field="DBZ"):
+def phidp_bringi(radar, gatefilter, phidp_name="PHIDP", refl_field="DBZ"):
     """
     Compute PHIDP and KDP Bringi.
 
@@ -60,7 +60,7 @@ def phidp_bringi(radar, gatefilter, unfold_phidp_name="PHI_UNF", refl_field="DBZ
         Py-ART radar data structure.
     gatefilter:
         Gate filter.
-    unfold_phidp_name: str
+    phidp_name: str
         Differential phase key name.
     refl_field: str
         Reflectivity key name.
@@ -72,8 +72,8 @@ def phidp_bringi(radar, gatefilter, unfold_phidp_name="PHI_UNF", refl_field="DBZ
     kdpb: ndarray
         Bringi specific differential phase array.
     """
-    nphase = pyart.correct.phase_proc.det_sys_phase_gf(radar, gatefilter, phidp_field=unfold_phidp_name, first_gate=30)    
-    dp = radar.fields[unfold_phidp_name]["data"].copy()
+    nphase = pyart.correct.phase_proc.det_sys_phase_gf(radar, gatefilter, phidp_field=phidp_name, first_gate=30)
+    dp = radar.fields[phidp_name]["data"].copy()
     dp -= nphase
     dz = radar.fields[refl_field]["data"].copy().filled(-9999)
 
