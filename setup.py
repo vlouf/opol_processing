@@ -16,7 +16,7 @@ EMAIL = "valentin.louf@bom.gov.au"
 AUTHOR = "Valentin Louf"
 
 # What packages are required for this module to be executed?
-REQUIRED = ["arm_pyart", "numpy", "csu_radartools", "crayons", "netCDF4", "scipy", "unravel", "scikit-learn<0.24"]
+REQUIRED = ["arm_pyart", "numpy", "csu_radartools", "crayons", "netCDF4", "scipy", "unravel"]
 
 here = os.path.abspath(os.path.dirname(__file__))
 
