@@ -64,11 +64,10 @@ def hydrometeor_classification(
         use_temperature = False
 
     if use_temperature:
-        scores = csu_fhc.csu_fhc_summer(dz=refl, zdr=zdr, rho=rhohv, kdp=kdp, use_temp=True, band="C", T=radar_T)
+        hydro = csu_fhc.csu_fhc_summer(dz=refl, zdr=zdr, rho=rhohv, kdp=kdp, use_temp=True, band="C", T=radar_T)
     else:
-        scores = csu_fhc.csu_fhc_summer(dz=refl, zdr=zdr, rho=rhohv, kdp=kdp, use_temp=False, band="C")
+        hydro = csu_fhc.csu_fhc_summer(dz=refl, zdr=zdr, rho=rhohv, kdp=kdp, use_temp=False, band="C")
 
-    hydro = np.argmax(scores, axis=0) + 1
     hydro[gatefilter.gate_excluded] = 0
     hydro_data = np.ma.masked_equal(hydro.astype(np.int16), 0)
 
