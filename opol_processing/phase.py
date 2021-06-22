@@ -74,6 +74,8 @@ def phidp_bringi(radar, gatefilter, phidp_name="PHIDP", refl_field="DBZ"):
     """
     nphase = pyart.correct.phase_proc.det_sys_phase_gf(radar, gatefilter, phidp_field=phidp_name, first_gate=30)
     dp = radar.fields[phidp_name]["data"].copy()
+    print(nphase, type(nphase))
+    print(dp.shape, dp.dtype)
     dp -= nphase
     dz = radar.fields[refl_field]["data"].copy().filled(-9999)
 
