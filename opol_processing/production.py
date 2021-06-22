@@ -282,10 +282,10 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     radar.add_field("height", height, replace_existing=True)
 
     # GateFilter
-    gatefilter, echoclass = filtering.do_gatefilter_opol(
+    gatefilter = filtering.do_gatefilter_opol(
         radar, refl_name="DBZ", phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR"
     )
-    radar.add_field("air_echo_classification", echoclass, replace_existing=True)
+    # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
     phidp, kdp = phase.phidp_bringi(radar, gatefilter)
     radar.add_field("PHIDP_VAL", phidp)
