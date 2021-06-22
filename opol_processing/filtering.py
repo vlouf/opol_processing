@@ -5,7 +5,7 @@ Gaussian Mixture Models to remove noise and clutter from CPOL data before 2009.
 @title: filtering
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 04/09/2020
+@date: 22/06/2021
 
 .. autosummary::
     :toctree: generated/
@@ -89,44 +89,78 @@ def get_gatefilter_GMM(radar, dbz_name, zdr_name, phidp_name, width_name, rhohv_
     return gf, hydro_class
 
 
+# def do_gatefilter_opol(
+#     radar, refl_name="DBZ", phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR", width_name="WIDTH"
+# ):
+#     """
+#     Filtering function adapted to CPOL.
+
+#     Parameters:
+#     ===========
+#         radar:
+#             Py-ART radar structure.
+#         refl_name: str
+#             Reflectivity field name.
+#         rhohv_name: str
+#             Cross correlation ratio field name.
+#         ncp_name: str
+#             Name of the normalized_coherent_power field.
+#         zdr_name: str
+#             Name of the differential_reflectivity field.
+
+#     Returns:
+#     ========
+#         gf_despeckeld: GateFilter
+#             Gate filter (excluding all bad data).
+#     """
+#     gf, hydroclass = get_gatefilter_GMM(
+#         radar,
+#         dbz_name=refl_name,
+#         zdr_name=zdr_name,
+#         phidp_name=phidp_name,
+#         width_name=width_name,
+#         rhohv_name=rhohv_name,
+#     )
+
+#     echoclass = {
+#         "data": hydroclass,
+#         "long_name": "radar_echo_classification",
+#         "units": " ",
+#         "description": "0: N/A, 1: Clutter, 2: Clear Air, 3: Meteorological echoes",
+#     }
+
+#     return gf, echoclass
+
 def do_gatefilter_opol(
-    radar, refl_name="DBZ", phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR", width_name="WIDTH"
+    radar,
+    refl_name="DBZ", phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR", width_name="WIDTH", snr_name="SNR"
 ):
     """
     Filtering function adapted to CPOL.
-
     Parameters:
     ===========
-        radar:
-            Py-ART radar structure.
-        refl_name: str
-            Reflectivity field name.
-        rhohv_name: str
-            Cross correlation ratio field name.
-        ncp_name: str
-            Name of the normalized_coherent_power field.
-        zdr_name: str
-            Name of the differential_reflectivity field.
-
+    radar:
+        Py-ART radar structure.
+    refl_name: str
+        Reflectivity field name.
+    rhohv_name: str
+        Cross correlation ratio field name.
+    ncp_name: str
+        Name of the normalized_coherent_power field.
+    zdr_name: str
+        Name of the differential_reflectivity field.
     Returns:
     ========
-        gf_despeckeld: GateFilter
-            Gate filter (excluding all bad data).
-    """
-    gf, hydroclass = get_gatefilter_GMM(
-        radar,
-        dbz_name=refl_name,
-        zdr_name=zdr_name,
-        phidp_name=phidp_name,
-        width_name=width_name,
-        rhohv_name=rhohv_name,
-    )
+    gf_despeckeld: GateFilter
+        Gate filter (excluding all bad data).
+    """    
+    gf = pyart.filters.GateFilter(radar)    
+        
+    gf.exclude_below(snr_name, 9)
+    gf.exclude_below(rhohv_name, 0.7)
+    gf.exclude_outside(zdr_name, -3.0, 7.0)
+    gf.exclude_outside(refl_name, -20.0, 80.0)
 
-    echoclass = {
-        "data": hydroclass,
-        "long_name": "radar_echo_classification",
-        "units": " ",
-        "description": "0: N/A, 1: Clutter, 2: Clear Air, 3: Meteorological echoes",
-    }
+    gf_despeckeld = pyart.correct.despeckle_field(radar, refl_name, gatefilter=gf)
 
-    return gf, echoclass
+    return gf_despeckeld
