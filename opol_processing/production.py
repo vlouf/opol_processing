@@ -212,7 +212,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         ("DBZ_CORR_ORIG", "corrected_reflectivity_edge"),
         ("RHOHV_CORR", "cross_correlation_ratio"),
         ("ZDR", "differential_reflectivity"),
-        ("ZDR_CORR_ATTEN", "corrected_differential_reflectivity"),
+        ("ZDR_CORR", "corrected_differential_reflectivity"),
         ("PHIDP", "differential_phase"),
         ("PHIDP_BRINGI", "bringi_differential_phase"),
         ("PHIDP_GG", "giangrande_differential_phase"),
@@ -240,6 +240,11 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         # Signal processing forgot (sometime) a space in generating the unit.
         nradar.time["units"] = nradar.time["units"].replace("since", "since ")
     radar_start_date = cftime.num2pydate(nradar.time["data"][0], nradar.time["units"])
+
+    try:
+        nradar.fields["TH"]
+    except KeyError:
+        nradar.add_field("TH", copy.deepcopy(nradar.fields["DBZ"]))
 
     # ZDR and DBZ calibration factor for OCEANPol before YMC experiment (included).
     if radar_start_date.year <= 2020:
@@ -285,6 +290,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     gatefilter = filtering.do_gatefilter_opol(
         radar, refl_name="DBZ", phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR"
     )
+    radar.fields["DBZ"]["data"][gatefilter.gate_excluded] = np.NaN
+    radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
     phidp, kdp = phase.phidp_bringi(radar, gatefilter)
