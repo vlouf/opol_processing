@@ -76,25 +76,25 @@ def correct_attenuation_zdr(radar, gatefilter, zdr_name="ZDR_CORR", phidp_name="
     zdr_corr: array
         Attenuation corrected differential reflectivity.
     """
-    zdr = radar.fields[zdr_name]["data"].copy()
+    # zdr = radar.fields[zdr_name]["data"].copy()
     phi = radar.fields[phidp_name]["data"].copy()
 
-    zdr_corr = zdr + 0.016 * phi
-    zdr_corr[gatefilter.gate_excluded] = np.NaN
-    zdr_corr = np.ma.masked_invalid(zdr_corr)
-    np.ma.set_fill_value(zdr_corr, np.NaN)
+    atten_corr = 0.016 * phi
+    atten_corr[gatefilter.gate_excluded] = np.NaN
+    atten_corr = np.ma.masked_invalid(atten_corr)
+    np.ma.set_fill_value(atten_corr, np.NaN)
     # Z-PHI coefficient from Bringi et al. 2001
-    zdr_meta = pyart.config.get_metadata("differential_reflectivity")
-    zdr_meta["description"] = "Attenuation corrected differential reflectivity using Bringi et al. 2001."
-    zdr_meta["_FillValue"] = np.NaN
-    zdr_meta["_Least_significant_digit"] = 2
-    zdr_meta["data"] = zdr_corr
+    atten_zdr_meta = pyart.config.get_metadata("path_integrateddifferential_attenuation")
+    atten_zdr_meta["description"] = "Attenuation corrected differential reflectivity using Bringi et al. 2001."
+    atten_zdr_meta["_FillValue"] = np.NaN
+    atten_zdr_meta["_Least_significant_digit"] = 2
+    atten_zdr_meta["data"] = atten_corr.astype(np.float32)
 
-    return zdr_meta
+    return atten_zdr_meta
 
 
 def correct_attenuation_zh_pyart(
-    radar, gatefilter, refl_field="DBZ", ncp_field="NCP", rhv_field="RHOHV_CORR", phidp_field="PHIDP_GG"
+    radar, refl_field="DBZ", ncp_field="NCP", rhv_field="RHOHV_CORR", phidp_field="PHIDP_GG"
 ):
     """
     Correct attenuation on reflectivity using Py-ART tool. The attenuation from
@@ -104,8 +104,6 @@ def correct_attenuation_zh_pyart(
     ===========
     radar:
         Py-ART radar structure.
-    gatefilter:
-        Filter excluding non meteorological echoes.
     refl_name: str
         Reflectivity field name.
     kdp_name: str
@@ -120,7 +118,7 @@ def correct_attenuation_zh_pyart(
     """
     # Compute attenuation
     spec_atten, _ = pyart.correct.calculate_attenuation(
-        radar, 0, rhv_min=0.3, refl_field=refl_field, ncp_field=rhv_field, rhv_field=rhv_field, phidp_field=phidp_field
+        radar, 0, rhv_min=0.3, refl_field=refl_field, ncp_field=ncp_field, rhv_field=rhv_field, phidp_field=phidp_field
     )
 
     specific_atten = np.ma.masked_invalid(spec_atten["data"])
@@ -128,9 +126,10 @@ def correct_attenuation_zh_pyart(
     dr = r[2] - r[1]
 
     na, nr = radar.fields[refl_field]["data"].shape
+    atten_meta = pyart.config.get_metadata("path_integrated_attenuation")    
     attenuation = np.zeros((na, nr))
     attenuation[:, :-1] = 2 * cumtrapz(specific_atten, dx=dr)
-    refl_corr = radar.fields[refl_field]["data"].copy() + attenuation
-    refl_corr = np.ma.masked_where(gatefilter.gate_excluded, refl_corr).astype(np.float32)
+    atten_meta["data"] = attenuation.astype(np.float32)
+    atten_meta["_Least_significant_digit"] = 2 
 
-    return refl_corr
+    return atten_meta

@@ -287,7 +287,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     )
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
-    phidp, kdp = phase.phidp_bringi(radar, gatefilter)
+    phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
     radar.add_field("PHIDP_VAL", phidp)
     radar.add_field("KDP_VAL", kdp)
     phidp_field_name = "PHIDP_VAL"
@@ -299,27 +299,27 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         radar.add_field("VEL_UNFOLDED", vdop_unfold, replace_existing=True)
 
     # Correct attenuation ZH and ZDR and hardcode gatefilter
-    zh_corr = attenuation.correct_attenuation_zh_pyart(radar, gatefilter, phidp_field=phidp_field_name)
-    radar.add_field_like("DBZ", "DBZ_CORR", zh_corr)
+    atten = attenuation.correct_attenuation_zh_pyart(radar, phidp_field=phidp_field_name)
+    radar.add_field("path_integrated_attenuation", atten)
 
     zdr_corr = attenuation.correct_attenuation_zdr(radar, gatefilter)
-    radar.add_field("ZDR_CORR_ATTEN", zdr_corr)
+    radar.add_field("path_integrated_differential_attenuation", zdr_corr)
 
     # Hydrometeors classification
     hydro_class = hydrometeors.hydrometeor_classification(
-        radar, gatefilter, kdp_name=kdp_field_name, zdr_name="ZDR_CORR_ATTEN"
+        radar, gatefilter, refl_name="DBZ", kdp_name=kdp_field_name, zdr_name="ZDR_CORR_ATTEN"
     )
 
     radar.add_field("radar_echo_classification", hydro_class, replace_existing=True)
 
     # Rainfall rate
     rainfall = hydrometeors.rainfall_rate(
-        radar, gatefilter, kdp_name=kdp_field_name, refl_name="DBZ_CORR", zdr_name="ZDR_CORR_ATTEN"
+        radar, gatefilter, kdp_name=kdp_field_name, refl_name="DBZ", zdr_name="ZDR_CORR_ATTEN"
     )
     radar.add_field("radar_estimated_rain_rate", rainfall)
 
     # Remove obsolete fields:
-    for obsolete_key in ["Refl", "PHI_UNF", "PHI_CORR", "height", "TH", "TV", "ZDR_CORR", "RHOHV"]:
+    for obsolete_key in ["Refl", "temperature", "PHI_UNF", "PHI_CORR", "height", "TH", "TV", "ZDR_CORR", "RHOHV"]:
         try:
             radar.fields.pop(obsolete_key)
         except KeyError:
