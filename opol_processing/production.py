@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 03/06/2021
+@date: 24/06/2021
 
 .. autosummary::
     :toctree: generated/
@@ -207,8 +207,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     FIELDS_NAMES = [
         ("VEL", "velocity"),
         ("VEL_UNFOLDED", "corrected_velocity"),
-        ("DBZ", "total_power"),
-        ("DBZ_CORR", "corrected_reflectivity"),
+        ("TH", "total_power"),
+        ("DBZ", "corrected_reflectivity"),
         ("DBZ_CORR_ORIG", "corrected_reflectivity_edge"),
         ("RHOHV_CORR", "cross_correlation_ratio"),
         ("ZDR", "differential_reflectivity"),
@@ -244,7 +244,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     # ZDR and DBZ calibration factor for OCEANPol before YMC experiment (included).
     if radar_start_date.year <= 2020:
         nradar.fields["ZDR"]["data"] += 1.0
-        nradar.fields["DBZ"]["data"] += 2.5
+        nradar.fields["DBZ"]["data"] += 3.5
         radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
         radar.elevation["data"] = radar.elevation["data"] - 0.9
         radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
@@ -307,19 +307,19 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     # Hydrometeors classification
     hydro_class = hydrometeors.hydrometeor_classification(
-        radar, gatefilter, refl_name="DBZ", kdp_name=kdp_field_name, zdr_name="ZDR_CORR_ATTEN"
+        radar, gatefilter, refl_name="DBZ", kdp_name=kdp_field_name, zdr_name="ZDR_CORR"
     )
 
     radar.add_field("radar_echo_classification", hydro_class, replace_existing=True)
 
     # Rainfall rate
     rainfall = hydrometeors.rainfall_rate(
-        radar, gatefilter, kdp_name=kdp_field_name, refl_name="DBZ", zdr_name="ZDR_CORR_ATTEN"
+        radar, gatefilter, kdp_name=kdp_field_name, refl_name="DBZ", zdr_name="ZDR_CORR"
     )
     radar.add_field("radar_estimated_rain_rate", rainfall)
 
     # Remove obsolete fields:
-    for obsolete_key in ["Refl", "temperature", "PHI_UNF", "PHI_CORR", "height", "TH", "TV", "ZDR_CORR", "RHOHV"]:
+    for obsolete_key in ["Refl", "temperature", "PHI_UNF", "PHI_CORR", "height", "TV", "RHOHV"]:
         try:
             radar.fields.pop(obsolete_key)
         except KeyError:
