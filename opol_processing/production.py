@@ -287,7 +287,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     )
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
-    phidp, kdp = phase.phidp_giangrande(radar, gatefilter)
+    phidp, kdp = phase.phidp_bringi(radar, gatefilter)
     radar.add_field("PHIDP_VAL", phidp)
     radar.add_field("KDP_VAL", kdp)
     phidp_field_name = "PHIDP_VAL"
