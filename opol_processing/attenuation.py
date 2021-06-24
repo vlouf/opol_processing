@@ -4,7 +4,7 @@ Codes for correcting and estimating attenuation on ZH and ZDR.
 @title: attenuation
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 04/09/2020
+@date: 24/06/2021
 
 .. autosummary::
     :toctree: generated/

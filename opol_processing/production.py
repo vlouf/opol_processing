@@ -308,6 +308,10 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     # Correct attenuation ZH and ZDR and hardcode gatefilter
     atten = attenuation.correct_attenuation_zh_pyart(radar, phidp_field=phidp_field_name)
     radar.add_field("path_integrated_attenuation", atten)
+    radar.fields["DBZ"]["comment"] = (
+        "Attenuation has not been corrected. Please consider added the 'path_integrated_attenuation' "
+        "to this field to take into account the attenuation."
+        )
 
     zdr_corr = attenuation.correct_attenuation_zdr(radar, gatefilter)
     radar.add_field("path_integrated_differential_attenuation", zdr_corr)

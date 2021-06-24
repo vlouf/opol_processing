@@ -157,7 +157,7 @@ def do_gatefilter_opol(
     gf = pyart.filters.GateFilter(radar)    
         
     gf.exclude_below(snr_name, 9)
-    gf.exclude_below(rhohv_name, 0.7)
+    gf.exclude_below(rhohv_name, 0.75)
     gf.exclude_outside(zdr_name, -3.0, 7.0)
     gf.exclude_outside(refl_name, -20.0, 80.0)
 
