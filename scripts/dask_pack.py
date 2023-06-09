@@ -5,14 +5,14 @@ dealiasing, unfolding, hydrometeors calculation, rainfall rate estimation.
 @title: opol_processing
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institution: Monash University and Bureau of Meteorology
-@date: 04/09/2020
+@date: 09/06/2023
 
 .. autosummary::
     :toctree: generated/
 
     chunks
     main
-    welcome_message
+    main
 """
 # Python Standard Library
 import os
@@ -56,7 +56,10 @@ def buffer(infile):
 
 
 def main():
-    flist = sorted(glob.glob(os.path.join(INPATH, "**/*.hdf")))
+    flist = sorted(glob.glob(os.path.join(INPATH, "*.hdf")))
+    if len(flist) == 0:
+        flist = sorted(glob.glob(os.path.join(INPATH, "**/*.hdf")))
+
     print(f"Found {len(flist)} files in {INPATH}")
     for fchunk in chunks(flist, 64):
         bag = db.from_sequence(fchunk).map(buffer)
@@ -70,9 +73,6 @@ if __name__ == "__main__":
     """
     Global variables definition.
     """
-    # Main global variables (Path directories).
-    OUTPATH = "/scratch/kl02/vhl548/opol/"
-
     # Parse arguments
     parser_description = """Raw radar PPIs processing. It provides Quality
 control, filtering, attenuation correction, dealiasing, unfolding, hydrometeors
@@ -81,6 +81,7 @@ calculation, and rainfall rate estimation."""
     parser.add_argument(
         "-i", "--input-dir", dest="indir", default=None, type=str, help="Input directory.", required=True
     )
+    parser.add_argument("-o", "--output-dir", dest="outdir", default="/scratch/kl02/vhl548/opol/", type=str, help="Output directory.")
     parser.add_argument("--unravel", dest="unravel", action="store_true")
     parser.add_argument("--no-unravel", dest="unravel", action="store_false")
     parser.set_defaults(unravel=True)
@@ -92,6 +93,7 @@ calculation, and rainfall rate estimation."""
     USE_UNRAVEL = args.unravel
     DO_DEALIASING = args.dealias
     INPATH = args.indir
+    OUTPATH = args.outdir
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

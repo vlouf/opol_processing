@@ -218,6 +218,16 @@ def coverage_content_type(radar) -> None:
     return None
 
 
+def get_refl_name(radar):
+    for refl_name in ["DBZH_CLEAN", "DBZH", "DBZ", "TH", None]:
+        if refl_name is None:
+            raise ValueError(f"Reflectivity not found.")
+        if refl_name in radar.fields.keys():
+            break
+
+    return refl_name
+
+
 def read_radar(radar_file_name: str):
     """
     Read the input radar file.

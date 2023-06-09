@@ -6,7 +6,7 @@ OPOL Level 1b driver.
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 24/06/2021
+@date: 09/06/2023
 
 .. autosummary::
     :toctree: generated/
@@ -209,6 +209,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         ("VEL_UNFOLDED", "corrected_velocity"),
         ("TH", "total_power"),
         ("DBZ", "corrected_reflectivity"),
+        ("DBZH", "corrected_reflectivity"),
         ("DBZ_CORR_ORIG", "corrected_reflectivity_edge"),
         ("RHOHV_CORR", "cross_correlation_ratio"),
         ("ZDR", "differential_reflectivity"),
@@ -231,6 +232,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     ]
 
     nradar = radar_codes.read_radar(radar_file_name)
+    dbz_name = radar_codes.get_refl_name(nradar)
     # Correct OceanPOL offset.
     if nradar.nsweeps < 10:
         return None
@@ -244,15 +246,15 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     try:
         nradar.fields["TH"]
     except KeyError:
-        nradar.add_field("TH", copy.deepcopy(nradar.fields["DBZ"]))
+        nradar.add_field("TH", copy.deepcopy(nradar.fields[dbz_name]))
 
     # ZDR and DBZ calibration factor for OCEANPol before YMC experiment (included).
     if radar_start_date.year <= 2020:
-        nradar.fields["ZDR"]["data"] += 1.0
-        nradar.fields["DBZ"]["data"] += 3.5
-        radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
-        radar.elevation["data"] = radar.elevation["data"] - 0.9
-        radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
+        nradar.fields["ZDR"]["data"] += 1.4
+        nradar.fields[dbz_name]["data"] += 3.5
+        # radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
+        # radar.elevation["data"] = radar.elevation["data"] - 0.9
+        # radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
     else:
         radar = nradar
 
@@ -288,9 +290,9 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     # GateFilter
     gatefilter = filtering.do_gatefilter_opol(
-        radar, refl_name="DBZ", phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR"
+        radar, refl_name=dbz_name, phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR"
     )
-    radar.fields["DBZ"]["data"][gatefilter.gate_excluded] = np.NaN
+    radar.fields[dbz_name]["data"][gatefilter.gate_excluded] = np.NaN
     radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
@@ -308,7 +310,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     # Correct attenuation ZH and ZDR and hardcode gatefilter
     atten = attenuation.correct_attenuation_zh_pyart(radar, phidp_field=phidp_field_name)
     radar.add_field("path_integrated_attenuation", atten)
-    radar.fields["DBZ"]["comment"] = (
+    radar.fields[dbz_name]["comment"] = (
         "Attenuation has not been corrected. Please consider added the 'path_integrated_attenuation' "
         "to this field to take into account the attenuation."
         )
@@ -318,14 +320,14 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     # Hydrometeors classification
     hydro_class = hydrometeors.hydrometeor_classification(
-        radar, gatefilter, refl_name="DBZ", kdp_name=kdp_field_name, zdr_name="ZDR_CORR"
+        radar, gatefilter, refl_name=dbz_name, kdp_name=kdp_field_name, zdr_name="ZDR_CORR"
     )
 
     radar.add_field("radar_echo_classification", hydro_class, replace_existing=True)
 
     # Rainfall rate
     rainfall = hydrometeors.rainfall_rate(
-        radar, gatefilter, kdp_name=kdp_field_name, refl_name="DBZ", zdr_name="ZDR_CORR"
+        radar, gatefilter, kdp_name=kdp_field_name, refl_name=dbz_name, zdr_name="ZDR_CORR"
     )
     radar.add_field("radar_estimated_rain_rate", rainfall)
 
