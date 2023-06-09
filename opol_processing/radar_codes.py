@@ -254,7 +254,7 @@ def read_radar(radar_file_name: str):
             ("WIDTHH", "WIDTH"),
         ]
     else:
-        radar = pyart.aux_io.read_odim_h5(radar_file_name, file_field_names=False)
+        radar = pyart.aux_io.read_odim_h5(radar_file_name, file_field_names=True)
         myfields = [
             ("normalized_coherent_power", "NCP"),
             ("reflectivity", "DBZ_CORR_ORIG"),
