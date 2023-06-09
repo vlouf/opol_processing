@@ -287,9 +287,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     radar.add_field("height", height, replace_existing=True)
 
     # GateFilter
-    gatefilter = filtering.do_gatefilter_opol(
-        radar, refl_name=dbz_name, phidp_name="PHIDP", rhohv_name="RHOHV_CORR", zdr_name="ZDR"
-    )
+    gatefilter = filtering.do_gatefilter_opol(radar, refl_name=dbz_name, rhohv_name="RHOHV_CORR", zdr_name="ZDR")
     radar.fields[dbz_name]["data"][gatefilter.gate_excluded] = np.NaN
     radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
