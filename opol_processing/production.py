@@ -231,32 +231,30 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         ("SQIV", "normalized_coherent_power_v"),
     ]
 
-    nradar = radar_codes.read_radar(radar_file_name)
-    dbz_name = radar_codes.get_refl_name(nradar)
+    radar = radar_codes.read_radar(radar_file_name)
+    dbz_name = radar_codes.get_refl_name(radar)
     # Correct OceanPOL offset.
-    if nradar.nsweeps < 10:
+    if radar.nsweeps < 10:
         return None
 
     # Correct time units.
-    if "since " not in nradar.time["units"]:
+    if "since " not in radar.time["units"]:
         # Signal processing forgot (sometime) a space in generating the unit.
-        nradar.time["units"] = nradar.time["units"].replace("since", "since ")
-    radar_start_date = cftime.num2pydate(nradar.time["data"][0], nradar.time["units"])
+        radar.time["units"] = radar.time["units"].replace("since", "since ")
+    radar_start_date = cftime.num2pydate(radar.time["data"][0], radar.time["units"])
 
     try:
-        nradar.fields["TH"]
+        radar.fields["TH"]
     except KeyError:
-        nradar.add_field("TH", copy.deepcopy(nradar.fields[dbz_name]))
+        radar.add_field("TH", copy.deepcopy(radar.fields[dbz_name]))
 
     # ZDR and DBZ calibration factor for OCEANPol before YMC experiment (included).
     if radar_start_date.year <= 2020:
-        nradar.fields["ZDR"]["data"] += 1.4
-        nradar.fields[dbz_name]["data"] += 3.5
-        # radar = copy.deepcopy(nradar.extract_sweeps(range(1, nradar.nsweeps)))
+        radar.fields["ZDR"]["data"] += 1.4
+        radar.fields[dbz_name]["data"] += 3.5
+        # radar = copy.deepcopy(radar.extract_sweeps(range(1, radar.nsweeps)))
         # radar.elevation["data"] = radar.elevation["data"] - 0.9
         # radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
-    else:
-        radar = nradar
 
     try:
         _ = radar.fields['VEL']
@@ -272,7 +270,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         pass
 
     # Check if radar reflecitivity field is correct.
-    if not radar_codes.check_reflectivity(radar):
+    if not radar_codes.check_reflectivity(radar, dbz_name):
         raise TypeError(f"Reflectivity field is empty in {radar_file_name}.")
 
     # Correct RHOHV

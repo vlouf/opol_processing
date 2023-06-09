@@ -219,11 +219,14 @@ def coverage_content_type(radar) -> None:
 
 
 def get_refl_name(radar):
+    print(radar.fields.keys())
     for refl_name in ["DBZH_CLEAN", "DBZH", "DBZ", "TH", None]:
         if refl_name is None:
             raise ValueError(f"Reflectivity not found.")
         if refl_name in radar.fields.keys():
-            break
+            return refl_name
+        else:
+            continue
 
     return refl_name
 
