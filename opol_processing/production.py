@@ -16,7 +16,6 @@ OPOL Level 1b driver.
     production_line
 """
 # Python Standard Library
-import gc
 import os
 import re
 import copy
@@ -159,9 +158,6 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     # Write results
     pyart.io.write_cfradial(outfilename, radar, format="NETCDF4")
 
-    # Free memory
-    del radar
-    gc.collect()
     return None
 
 
@@ -250,11 +246,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     # ZDR and DBZ calibration factor for OCEANPol before YMC experiment (included).
     if radar_start_date.year <= 2020:
-        radar.fields["ZDR"]["data"] += 1.4
+        radar.fields["ZDR"]["data"] += 0.7
         radar.fields[dbz_name]["data"] += 3.5
-        # radar = copy.deepcopy(radar.extract_sweeps(range(1, radar.nsweeps)))
-        # radar.elevation["data"] = radar.elevation["data"] - 0.9
-        # radar.elevation["data"] = radar.elevation["data"].astype(np.float32)
 
     try:
         _ = radar.fields['VEL']
@@ -292,11 +285,11 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
-    phidp, kdp = phase.phidp_bringi(radar, gatefilter)
-    radar.add_field("PHIDP_VAL", phidp)
-    radar.add_field("KDP_VAL", kdp)
-    phidp_field_name = "PHIDP_VAL"
-    kdp_field_name = "KDP_VAL"
+    phidp, kdp = phase.phido(radar, gatefilter)
+    radar.add_field("PHIDP_PHIDO", phidp)
+    radar.add_field("KDP_PHIDO", kdp)
+    phidp_field_name = "PHIDP_PHIDO"
+    kdp_field_name = "KDP_PHIDO"
 
     # Unfold VELOCITY
     if do_dealiasing:
