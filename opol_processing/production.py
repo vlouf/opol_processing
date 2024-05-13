@@ -202,6 +202,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unrav
     """
     FIELDS_NAMES = [
         ("VEL", "velocity"),
+        ("VRAD", "velocity"),
+        ("VRADH", "velocity"),
         ("VEL_UNFOLDED", "corrected_velocity"),
         ("TH", "total_power"),
         ("DBZ", "reflectivity"),

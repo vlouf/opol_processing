@@ -166,10 +166,10 @@ def phido(radar, gatefilter, refl_field, rhv_field="RHOHV_CORR", phidp_field="PH
     # filter bad data
     gatefilter = pyart.correct.GateFilter(radar)
     gatefilter.exclude_masked(refl_field)
-    gatefilter.exclude_below(rhv_field, 0.9)
+    gatefilter.exclude_below(rhv_field, 0.95)
 
     # calculate kdp
-    kdp_meta, phidp_meta = kdp_pyart(radar, phidp_field, gatefilter, window = (3,7)) 
+    kdp_meta, phidp_meta = kdp_pyart(radar, phidp_field, gatefilter, window = (3, 15)) 
     kdp_meta["data"] = kdp_meta["data"].astype(np.float32)
     phidp_meta["data"] = phidp_meta["data"].astype(np.float32)
     radar.add_field('kdp_phido', kdp_meta, replace_existing = True)
