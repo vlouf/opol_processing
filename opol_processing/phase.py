@@ -18,7 +18,7 @@ import numpy as np
 
 from phido import kdp_pyart
 from scipy import integrate
-# from csu_radartools import csu_kdp
+from csu_radartools import csu_kdp
 
 
 def _fix_phidp_from_kdp(phidp, kdp, r, gatefilter):
