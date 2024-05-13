@@ -290,7 +290,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
-    phidp_bringi, kdp_bringi = phase.phidp_bringi(radar, gatefilter, refl_field=dbz_name).
+    phidp_bringi, kdp_bringi = phase.phidp_bringi(radar, gatefilter, refl_field=dbz_name)
     radar.add_field("PHIDP_BRINGI", phidp_bringi)
     radar.add_field("KDP_BRINGI", kdp_bringi)
     phidp, kdp = phase.phido(radar, gatefilter, dbz_name)
