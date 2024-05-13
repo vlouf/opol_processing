@@ -52,7 +52,7 @@ def _mkdir(dir):
     return None
 
 
-def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=True):
+def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True):
     """
     Call processing function and write data.
 
@@ -89,7 +89,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     # Business start here.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        radar = production_line(radar_file_name, do_dealiasing=do_dealiasing, use_unravel=use_unravel)
+        radar = production_line(radar_file_name, do_dealiasing=do_dealiasing, use_csu=use_csu)
         if radar is None:
             print(f"{radar_file_name} has not been processed. Check logs.")
             return None
@@ -161,7 +161,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     return None
 
 
-def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unravel=True):
+def production_line(radar_file_name, do_dealiasing=True, use_csu=True):
     """
     Production line for correcting and estimating OPOL data radar parameters.
     The naming convention for these parameters is assumed to be DBZ, ZDR, VEL,
@@ -216,7 +216,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unrav
         ("PHIDP", "differential_phase"),
         ("PHIDP_BRINGI", "bringi_differential_phase"),
         ("PHIDP_GG", "giangrande_differential_phase"),
-        ("PHIDP_PHIDO", "corrected_differential_phase"),        
+        ("PHIDP_PHIDO", "corrected_differential_phase"),
         ("KDP", "specific_differential_phase"),
         ("KDP_BRINGI", "bringi_specific_differential_phase"),
         ("KDP_GG", "giangrande_specific_differential_phase"),
@@ -294,7 +294,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unrav
     radar.fields[dbz_name]["data"][gatefilter.gate_excluded] = np.NaN
     radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
-    
+
     phidp, kdp = phase.phido(radar, gatefilter, dbz_name)
     radar.add_field("PHIDP_PHIDO", phidp)
     radar.add_field("KDP_PHIDO", kdp)
@@ -321,7 +321,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unrav
         phidp_bringi, kdp_bringi = phase.phidp_bringi(radar, gatefilter, refl_field=dbz_name)
         radar.add_field("PHIDP_BRINGI", phidp_bringi)
         radar.add_field("KDP_BRINGI", kdp_bringi)
-        
+
         # Hydrometeors classification
         hydro_class = hydrometeors.hydrometeor_classification(
             radar, gatefilter, refl_name=dbz_name, kdp_name="KDP_BRINGI", zdr_name="ZDR_CORR"
