@@ -50,55 +50,55 @@ def _fix_phidp_from_kdp(phidp, kdp, r, gatefilter):
     return phidp, kdp
 
 
-# def phidp_bringi(radar, gatefilter, phidp_name="PHIDP", refl_field="DBZ"):
-#     """
-#     Compute PHIDP and KDP Bringi.
+def phidp_bringi(radar, gatefilter, phidp_name="PHIDP", refl_field="DBZ"):
+    """
+    Compute PHIDP and KDP Bringi.
 
-#     Parameters
-#     ==========
-#     radar:
-#         Py-ART radar data structure.
-#     gatefilter:
-#         Gate filter.
-#     phidp_name: str
-#         Differential phase key name.
-#     refl_field: str
-#         Reflectivity key name.
+    Parameters
+    ==========
+    radar:
+        Py-ART radar data structure.
+    gatefilter:
+        Gate filter.
+    phidp_name: str
+        Differential phase key name.
+    refl_field: str
+        Reflectivity key name.
 
-#     Returns:
-#     ========
-#     phidpb: ndarray
-#         Bringi differential phase array.
-#     kdpb: ndarray
-#         Bringi specific differential phase array.
-#     """
-#     nphase = pyart.correct.phase_proc.det_sys_phase_gf(radar, gatefilter, phidp_field=phidp_name, first_gate=30)
-#     if nphase is None:
-#         nphase = 0
-#     dp = radar.fields[phidp_name]["data"].copy()    
-#     dp -= nphase
-#     dz = radar.fields[refl_field]["data"].copy().filled(-9999)
+    Returns:
+    ========
+    phidpb: ndarray
+        Bringi differential phase array.
+    kdpb: ndarray
+        Bringi specific differential phase array.
+    """
+    nphase = pyart.correct.phase_proc.det_sys_phase_gf(radar, gatefilter, phidp_field=phidp_name, first_gate=30)
+    if nphase is None:
+        nphase = 0
+    dp = radar.fields[phidp_name]["data"].copy()    
+    dp -= nphase
+    dz = radar.fields[refl_field]["data"].copy().filled(-9999)
 
-#     # Extract dimensions
-#     rng = radar.range["data"]
-#     azi = radar.azimuth["data"]
-#     dgate = rng[1] - rng[0]
-#     [R, A] = np.meshgrid(rng, azi)
+    # Extract dimensions
+    rng = radar.range["data"]
+    azi = radar.azimuth["data"]
+    dgate = rng[1] - rng[0]
+    [R, A] = np.meshgrid(rng, azi)
 
-#     # Compute KDP bringi.
-#     kdpb, phidpb, _ = csu_kdp.calc_kdp_bringi(dp, dz, R / 1e3, gs=dgate, bad=-9999, thsd=12, window=3.0, std_gate=11)
+    # Compute KDP bringi.
+    kdpb, phidpb, _ = csu_kdp.calc_kdp_bringi(dp, dz, R / 1e3, gs=dgate, bad=-9999, thsd=12, window=3.0, std_gate=11)
 
-#     # Mask array
-#     phidpb = np.ma.masked_where(phidpb == -9999, phidpb)
-#     kdpb = np.ma.masked_where(kdpb == -9999, kdpb)
+    # Mask array
+    phidpb = np.ma.masked_where(phidpb == -9999, phidpb)
+    kdpb = np.ma.masked_where(kdpb == -9999, kdpb)
 
-#     # Get metadata.
-#     phimeta = pyart.config.get_metadata("differential_phase")
-#     phimeta["data"] = phidpb
-#     kdpmeta = pyart.config.get_metadata("specific_differential_phase")
-#     kdpmeta["data"] = kdpb
+    # Get metadata.
+    phimeta = pyart.config.get_metadata("differential_phase")
+    phimeta["data"] = phidpb
+    kdpmeta = pyart.config.get_metadata("specific_differential_phase")
+    kdpmeta["data"] = kdpb
 
-#     return phimeta, kdpmeta
+    return phimeta, kdpmeta
 
 
 def phidp_giangrande(radar, gatefilter, refl_field="DBZ", ncp_field="NCP", rhv_field="RHOHV_CORR", phidp_field="PHIDP"):

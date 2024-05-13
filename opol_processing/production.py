@@ -290,6 +290,9 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
+    phidp_bringi, kdp_bringi = phase.phidp_bringi(radar, gatefilter, refl_field=dbz_name).
+    radar.add_field("PHIDP_BRINGI", phidp_bringi)
+    radar.add_field("KDP_BRINGI", kdp_bringi)
     phidp, kdp = phase.phido(radar, gatefilter, dbz_name)
     radar.add_field("PHIDP_PHIDO", phidp)
     radar.add_field("KDP_PHIDO", kdp)
@@ -314,7 +317,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     # Hydrometeors classification
     hydro_class = hydrometeors.hydrometeor_classification(
-        radar, gatefilter, refl_name=dbz_name, kdp_name=kdp_field_name, zdr_name="ZDR_CORR"
+        radar, gatefilter, refl_name=dbz_name, kdp_name="KDP_BRINGI", zdr_name="ZDR_CORR"
     )
 
     radar.add_field("radar_echo_classification", hydro_class, replace_existing=True)
