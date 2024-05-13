@@ -228,7 +228,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     ]
 
     radar = radar_codes.read_radar(radar_file_name)
-    dbz_name = radar_codes.get_refl_name(radar)
+    dbz_name = radar_codes.get_corr_refl(radar)
     # Correct OceanPOL offset.
     if radar.nsweeps < 10:
         return None
@@ -251,7 +251,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
 
     fake_ncp = False
     if "NCP" not in radar.fields.keys():
-        radar.add_field_like("SQI", "NCP")
+        radar.add_field("NCP", radar.fields["SQI"])
         fake_ncp = True
 
     try:
@@ -290,7 +290,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
 
-    phidp, kdp = phase.phido(radar, gatefilter)
+    phidp, kdp = phase.phido(radar, gatefilter, dbz_name)
     radar.add_field("PHIDP_PHIDO", phidp)
     radar.add_field("KDP_PHIDO", kdp)
     phidp_field_name = "PHIDP_PHIDO"
@@ -302,14 +302,14 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         radar.add_field("VEL_UNFOLDED", vdop_unfold, replace_existing=True)
 
     # Correct attenuation ZH and ZDR and hardcode gatefilter
-    atten = attenuation.correct_attenuation_zh_pyart(radar, phidp_field=phidp_field_name)
+    atten = attenuation.correct_attenuation_zh_pyart(radar, refl_field=dbz_name, phidp_field=phidp_field_name)
     radar.add_field("path_integrated_attenuation", atten)
     radar.fields[dbz_name]["comment"] = (
         "Attenuation has not been corrected. Please consider added the 'path_integrated_attenuation' "
         "to this field to take into account the attenuation."
         )
 
-    zdr_corr = attenuation.correct_attenuation_zdr(radar, gatefilter)
+    zdr_corr = attenuation.correct_attenuation_zdr(radar, gatefilter, phidp_name=phidp_field_name)
     radar.add_field("path_integrated_differential_attenuation", zdr_corr)
 
     # Hydrometeors classification

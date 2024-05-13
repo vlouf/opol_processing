@@ -162,7 +162,7 @@ def phidp_giangrande(radar, gatefilter, refl_field="DBZ", ncp_field="NCP", rhv_f
     return phidp_gg, kdp_gg
 
 
-def phido(radar, gatefilter, refl_field="DBZ", rhv_field="RHOHV_CORR", phidp_field="PHIDP"):
+def phido(radar, gatefilter, refl_field, rhv_field="RHOHV_CORR", phidp_field="PHIDP"):
     # filter bad data
     gatefilter = pyart.correct.GateFilter(radar)
     gatefilter.exclude_masked(refl_field)
@@ -170,6 +170,8 @@ def phido(radar, gatefilter, refl_field="DBZ", rhv_field="RHOHV_CORR", phidp_fie
 
     # calculate kdp
     kdp_meta, phidp_meta = kdp_pyart(radar, phidp_field, gatefilter, window = (3,7)) 
+    kdp_meta["data"] = kdp_meta["data"].astype(np.float32)
+    phidp_meta["data"] = phidp_meta["data"].astype(np.float32)
     radar.add_field('kdp_phido', kdp_meta, replace_existing = True)
     radar.add_field('phidp_phido', phidp_meta, replace_existing = True)
     return phidp_meta, kdp_meta
