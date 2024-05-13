@@ -161,7 +161,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_unravel=T
     return None
 
 
-def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
+def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unravel=True):
     """
     Production line for correcting and estimating OPOL data radar parameters.
     The naming convention for these parameters is assumed to be DBZ, ZDR, VEL,
@@ -289,10 +289,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     radar.fields[dbz_name]["data"][gatefilter.gate_excluded] = np.NaN
     radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
     # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
-
-    phidp_bringi, kdp_bringi = phase.phidp_bringi(radar, gatefilter, refl_field=dbz_name)
-    radar.add_field("PHIDP_BRINGI", phidp_bringi)
-    radar.add_field("KDP_BRINGI", kdp_bringi)
+    
     phidp, kdp = phase.phido(radar, gatefilter, dbz_name)
     radar.add_field("PHIDP_PHIDO", phidp)
     radar.add_field("KDP_PHIDO", kdp)
@@ -315,18 +312,23 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     zdr_corr = attenuation.correct_attenuation_zdr(radar, gatefilter, phidp_name=phidp_field_name)
     radar.add_field("path_integrated_differential_attenuation", zdr_corr)
 
-    # Hydrometeors classification
-    hydro_class = hydrometeors.hydrometeor_classification(
-        radar, gatefilter, refl_name=dbz_name, kdp_name="KDP_BRINGI", zdr_name="ZDR_CORR"
-    )
+    if use_csu:
+        phidp_bringi, kdp_bringi = phase.phidp_bringi(radar, gatefilter, refl_field=dbz_name)
+        radar.add_field("PHIDP_BRINGI", phidp_bringi)
+        radar.add_field("KDP_BRINGI", kdp_bringi)
+        
+        # Hydrometeors classification
+        hydro_class = hydrometeors.hydrometeor_classification(
+            radar, gatefilter, refl_name=dbz_name, kdp_name="KDP_BRINGI", zdr_name="ZDR_CORR"
+        )
 
-    radar.add_field("radar_echo_classification", hydro_class, replace_existing=True)
+        radar.add_field("radar_echo_classification", hydro_class, replace_existing=True)
 
-    # Rainfall rate
-    rainfall = hydrometeors.rainfall_rate(
-        radar, gatefilter, kdp_name=kdp_field_name, refl_name=dbz_name, zdr_name="ZDR_CORR"
-    )
-    radar.add_field("radar_estimated_rain_rate", rainfall)
+        # Rainfall rate
+        rainfall = hydrometeors.rainfall_rate(
+            radar, gatefilter, kdp_name=kdp_field_name, refl_name=dbz_name, zdr_name="ZDR_CORR"
+        )
+        radar.add_field("radar_estimated_rain_rate", rainfall)
 
     # Remove obsolete fields:
     if fake_ncp:
