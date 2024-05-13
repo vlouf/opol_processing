@@ -47,8 +47,8 @@ def do_gatefilter_opol(
         gf.exclude_below(ncp_name, 0.3)
     except Exception:
         pass
-    gf.exclude_below(rhohv_name, 0.5)
-    gf.exclude_outside(zdr_name, -2.0, 7.0)
+    gf.exclude_below(rhohv_name, 0.7)
+    gf.exclude_outside(zdr_name, -2.0, 5.0)
     gf.exclude_outside(refl_name, -15.0, 90.0)
 
     gf_despeckeld = pyart.correct.despeckle_field(radar, refl_name, gatefilter=gf)
