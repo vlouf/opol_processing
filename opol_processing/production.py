@@ -204,8 +204,9 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unrav
         ("VEL", "velocity"),
         ("VEL_UNFOLDED", "corrected_velocity"),
         ("TH", "total_power"),
-        ("DBZ", "corrected_reflectivity"),
-        ("DBZH", "corrected_reflectivity"),
+        ("DBZ", "reflectivity"),
+        ("DBZH", "reflectivity"),
+        ("DBZH_CLEAN", "corrected_reflectivity"),
         ("DBZ_CORR_ORIG", "corrected_reflectivity_edge"),
         ("RHOHV_CORR", "cross_correlation_ratio"),
         ("ZDR", "differential_reflectivity"),
@@ -213,12 +214,14 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unrav
         ("PHIDP", "differential_phase"),
         ("PHIDP_BRINGI", "bringi_differential_phase"),
         ("PHIDP_GG", "giangrande_differential_phase"),
-        ("PHIDP_VAL", "corrected_differential_phase"),
+        ("PHIDP_PHIDO", "corrected_differential_phase"),        
         ("KDP", "specific_differential_phase"),
         ("KDP_BRINGI", "bringi_specific_differential_phase"),
         ("KDP_GG", "giangrande_specific_differential_phase"),
-        ("KDP_VAL", "corrected_specific_differential_phase"),
+        ("KDP_PHIDO", "corrected_specific_differential_phase"),
         ("WIDTH", "spectrum_width"),
+        ("WRAD", "spectrum_width"),
+        ("WRADH", "spectrum_width"),
         ("SNR", "signal_to_noise_ratio"),
         ("NCP", "normalized_coherent_power"),
         ("DBZV", "reflectivity_v"),
@@ -354,3 +357,4 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, use_unrav
     radar_codes.coverage_content_type(radar)
 
     return radar
+
