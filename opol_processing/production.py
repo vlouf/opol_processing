@@ -249,6 +249,11 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
         radar.fields["ZDR"]["data"] += 0.7
         radar.fields[dbz_name]["data"] += 3.5
 
+    fake_ncp = False
+    if "NCP" not in radar.fields.keys():
+        radar.add_field_like("SQI", "NCP")
+        fake_ncp = True
+
     try:
         _ = radar.fields['VEL']
     except KeyError:
@@ -321,6 +326,9 @@ def production_line(radar_file_name, do_dealiasing=True, use_unravel=True):
     radar.add_field("radar_estimated_rain_rate", rainfall)
 
     # Remove obsolete fields:
+    if fake_ncp:
+        _ = radar.fields.pop("NCP")
+
     for obsolete_key in ["Refl", "temperature", "PHI_UNF", "PHI_CORR", "height", "TV", "RHOHV"]:
         try:
             radar.fields.pop(obsolete_key)

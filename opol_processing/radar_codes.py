@@ -218,17 +218,17 @@ def coverage_content_type(radar) -> None:
     return None
 
 
-def get_refl_name(radar):
-    print(radar.fields.keys())
-    for refl_name in ["DBZH_CLEAN", "DBZH", "DBZ", "TH", None]:
-        if refl_name is None:
-            raise ValueError(f"Reflectivity not found.")
-        if refl_name in radar.fields.keys():
-            return refl_name
-        else:
-            continue
+def get_corr_refl(radar):
+    for dbz_key in ["DBZH", "DBZ", "TH", None]:
+        if dbz_key in radar.fields.keys():
+            break
 
-    return refl_name
+    if dbz_key is None:
+        raise ValueError(f"Reflectivity not found.")
+
+    radar.add_field("DBZH_CLEAN", radar.fields[dbz_key])
+
+    return "DBZH_CLEAN"
 
 
 def read_radar(radar_file_name: str):
