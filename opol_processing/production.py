@@ -1,12 +1,17 @@
 """
 OPOL Level 1b driver.
 
+Reads an ODIM volume, applies the oceanpol_kit science (alias resolution,
+date-indexed calibration, robust ERA5/bright-band temperature, coherence-based
+velocity censoring + UNRAVEL, precip-gated PHIDO phase, Z-PHI attenuation,
+Southern-Ocean rainfall, DSD/snow/HID) and writes a CF/Radial netCDF with
+verbose variable names.
+
 @project: OCEANPol
 @title: production
 @author: Valentin Louf
 @email: valentin.louf@bom.gov.au
 @institution: Bureau of Meteorology and Monash University
-@date: 09/06/2023
 
 .. autosummary::
     :toctree: generated/
@@ -18,7 +23,7 @@ OPOL Level 1b driver.
 # Python Standard Library
 import os
 import re
-import copy
+import time
 import uuid
 import datetime
 import warnings
@@ -27,69 +32,380 @@ import warnings
 import pyart
 import cftime
 import numpy as np
+import pandas as pd
 
 # Custom modules.
 from . import attenuation
+from . import calibration
 from . import filtering
 from . import hydrometeors
 from . import phase
 from . import radar_codes
+from . import temperature
 
 
-def _mkdir(dir):
-    """
-    Make directory. Might seem redundant but you might have concurrency issue
-    when dealing with multiprocessing.
-    """
-    if os.path.exists(dir):
+# If the number of coherent velocity gates left after noise censoring is below
+# this value, UNRAVEL is skipped and the censored velocity is passed through.
+MIN_UNRAVEL_GATES = 100
+
+HID_COMMENT = (
+    "1: Drizzle; 2: Rain; 3: Ice Crystals; 4: Aggregates; 5: Wet Snow; "
+    "6: Vertical Ice; 7: LD Graupel; 8: HD Graupel; 9: Hail; 10: Big Drops"
+)
+
+# Final CF/Radial variables to publish; everything else is dropped before write.
+KEEP_FIELDS = {
+    "total_power",
+    "reflectivity",
+    "corrected_reflectivity",
+    "attenuation_corrected_reflectivity",
+    "path_integrated_attenuation",
+    "differential_reflectivity",
+    "corrected_differential_reflectivity",
+    "path_integrated_differential_attenuation",
+    "cross_correlation_ratio",
+    "velocity",
+    "corrected_velocity",
+    "differential_phase",
+    "corrected_differential_phase",
+    "corrected_specific_differential_phase",
+    "temperature",
+    "radar_echo_classification",
+    "radar_estimated_rain_rate",
+    "radar_estimated_snow_rate",
+    "normalized_intercept_parameter",
+    "median_volume_diameter",
+}
+
+
+def _meta(data, **kwargs) -> dict:
+    """Build a Py-ART field dictionary."""
+    field = {"data": data}
+    field.update(kwargs)
+    return field
+
+
+def _toc(label: str, t0: float, debug: bool) -> float:
+    """Print the elapsed time for a step (when debug) and return a fresh tic."""
+    now = time.time()
+    if debug:
+        print(f"  [{label:<22}] {now - t0:7.3f} s")
+    return now
+
+
+def _mkdir(path):
+    """Make a directory, tolerating concurrent creation (multiprocessing)."""
+    if os.path.exists(path):
         return None
-
     try:
-        os.mkdir(dir)
+        os.makedirs(path)
     except FileExistsError:
         pass
-
     return None
 
 
-def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True):
+def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=False):
     """
-    Call processing function and write data.
+    Production line for correcting and estimating OPOL radar parameters.
 
-    Parameters:
-    ===========
-    radar_file_name: str
+    Parameters
+    ----------
+    radar_file_name : str
+        Name of the input radar file (ODIM .hdf/.h5).
+    do_dealiasing : bool
+        Dealias velocity with UNRAVEL.
+    use_csu : bool
+        Compute HID/rainfall/DSD/snow products.
+    debug : bool
+        If True, print the wall-clock time taken by each processing step.
+
+    Returns
+    -------
+    radar : pyart.core.Radar or None
+        Processed radar (None if the file is unsuitable, e.g. < 10 sweeps).
+    """
+    st = time.time()
+    t = st
+    if debug:
+        print(f"Processing {radar_file_name}")
+
+    radar = radar_codes.read_radar(radar_file_name)
+    if radar.nsweeps < 10:
+        if debug:
+            print(f"  Skipped: only {radar.nsweeps} sweeps (< 10).")
+        return None
+    t = _toc("read", t, debug)
+
+    # Ensure sweeps are ordered by ascending elevation (the OceanPOL scan
+    # strategy changed from bottom-up to top-down; downstream 3D steps assume
+    # increasing elevation with sweep index).
+    radar = radar_codes.order_sweeps_by_elevation(radar)
+    if debug:
+        print(f"  sweep elevations: {np.round(np.asarray(radar.fixed_angle['data']), 2)}")
+    t = _toc("order sweeps", t, debug)
+
+    # Resolve field names once for the whole volume (raises if a required field
+    # is missing).
+    fields = radar_codes.resolve_fields(radar)
+    dbz_name = fields["DBZH"]
+    th_name = fields["TH"]
+    zdr_name = fields["ZDR"]
+    rho_name = fields["RHOHV"]
+    phidp_name = fields["PHIDP"]
+    snr_name = fields["SNR"]
+    vel_name = fields["VRAD"]
+    sqi_name = fields["SQI"]
+
+    # Correct time units (signal processing sometimes drops a space).
+    if "since " not in radar.time["units"]:
+        radar.time["units"] = radar.time["units"].replace("since", "since ")
+    rdate = pd.Timestamp(cftime.num2pydate(radar.time["data"][0], radar.time["units"]))
+
+    if not radar_codes.check_reflectivity(radar, dbz_name):
+        raise TypeError(f"Reflectivity field is empty in {radar_file_name}.")
+
+    # Date-indexed calibration offsets (dB).
+    cal_offset, zdr_offset = calibration.get_calib_offset(rdate)
+
+    r = radar.range["data"]
+    lat = float(np.asarray(radar.latitude["data"]).ravel()[0])
+    lon = float(np.asarray(radar.longitude["data"]).ravel()[0])
+    southern_ocean = lat < -40
+    t = _toc("resolve+calib", t, debug)
+
+    # --- RHOHV noise correction ---
+    rho_corr = radar_codes.correct_rhohv(radar, rhohv_name=rho_name, snr_name=snr_name)
+    radar.add_field(
+        "cross_correlation_ratio",
+        _meta(rho_corr, long_name="Corrected cross correlation ratio", units="1"),
+        replace_existing=True,
+    )
+    t = _toc("rhohv", t, debug)
+
+    # --- Temperature profile (ERA5 -> bright band -> default) ---
+    geo_h, temp_k = temperature.get_volume_temperature_profile(rdate, lat, lon, radar, fields)
+    temps = temperature.interp_temperature(geo_h, temp_k, radar.gate_altitude["data"])
+    radar.add_field(
+        "temperature",
+        _meta(
+            temps.astype(np.float32),
+            long_name="Temperature at gate",
+            units="degrees Celsius",
+            comment=f"Profile date: {rdate:%Y/%m/%d}",
+        ),
+        replace_existing=True,
+    )
+    t = _toc("temperature", t, debug)
+
+    # --- Reflectivity cleaning (hydrometeor gate filter) ---
+    gf = filtering.do_gatefilter_opol(
+        radar, refl_name=th_name, rhohv_name="cross_correlation_ratio", phidp_name=phidp_name
+    )
+    th = radar.fields[th_name]["data"]
+    dbz_clean = np.ma.masked_where(gf.gate_excluded, th).astype(np.float32) + cal_offset
+    dbz_clean = np.ma.masked_invalid(dbz_clean)
+    radar.add_field(
+        "corrected_reflectivity",
+        _meta(
+            dbz_clean,
+            long_name="Corrected reflectivity",
+            units="dBZ",
+            standard_name="corrected_equivalent_reflectivity_factor",
+            comment="Cleaned and calibrated; attenuation NOT applied (see attenuation_corrected_reflectivity).",
+        ),
+        replace_existing=True,
+    )
+    t = _toc("refl cleaning", t, debug)
+
+    # --- PHIDP / KDP (precip-gated PHIDO) ---
+    precip_gf = filtering.do_precip_gatefilter(
+        radar, refl_name="corrected_reflectivity", rhohv_name="cross_correlation_ratio", snr_name=snr_name
+    )
+    refl_for_phi = np.ma.filled(dbz_clean, np.nan)
+    phidp_corr, kdp = phase.get_phidp(radar, phidp_name, precip_gf, refl_for_phi, temps)
+    radar.add_field(
+        "corrected_differential_phase",
+        _meta(phidp_corr.astype(np.float32), long_name="Corrected differential phase (PHIDO)", units="degree"),
+        replace_existing=True,
+    )
+    radar.add_field(
+        "corrected_specific_differential_phase",
+        _meta(kdp.astype(np.float32), long_name="Corrected specific differential phase (PHIDO)", units="degree/km"),
+        replace_existing=True,
+    )
+    t = _toc("phidp/kdp (phido)", t, debug)
+
+    # --- Velocity dealiasing (coherence censoring + UNRAVEL) ---
+    if do_dealiasing and vel_name in radar.fields:
+        vgf = filtering.do_velocity_gatefilter(radar, vel_name=vel_name, sqi_name=sqi_name, th_name=th_name)
+        n_coherent = int(np.count_nonzero(~vgf.gate_excluded))
+        censored = np.ma.masked_where(vgf.gate_excluded, radar.fields[vel_name]["data"])
+        if debug:
+            print(f"  coherent velocity gates: {n_coherent}")
+
+        if n_coherent < MIN_UNRAVEL_GATES:
+            print(f"Skipping UNRAVEL: {n_coherent} coherent velocity gates (< {MIN_UNRAVEL_GATES}).")
+            vel_meta = pyart.config.get_metadata("velocity")
+            vel_meta["data"] = censored.astype(np.float32)
+            vel_meta["units"] = "m s-1"
+            vel_meta["comment"] = f"UNRAVEL skipped ({n_coherent} coherent gates)."
+        else:
+            radar.add_field("VEL_CENSORED", _meta(censored, units="m s-1"), replace_existing=True)
+            vel_meta = radar_codes.unravel(radar, vgf, vel_name="VEL_CENSORED", dbz_name="corrected_reflectivity")
+            radar.fields.pop("VEL_CENSORED", None)
+
+        radar.add_field("corrected_velocity", vel_meta, replace_existing=True)
+    t = _toc("dealiasing (unravel)", t, debug)
+
+    # --- ZH attenuation (Z-PHI) ---
+    pia = attenuation.correct_attenuation(r, dbz_clean, phidp_corr, temps)
+    radar.add_field(
+        "path_integrated_attenuation",
+        _meta(pia.astype(np.float32), long_name="Path integrated attenuation", units="dB"),
+        replace_existing=True,
+    )
+    dbz_atten = np.ma.masked_invalid((dbz_clean + pia).astype(np.float32))
+    radar.add_field(
+        "attenuation_corrected_reflectivity",
+        _meta(
+            dbz_atten,
+            long_name="Attenuation corrected reflectivity",
+            units="dBZ",
+            comment="Corrected reflectivity with Z-PHI path-integrated attenuation added.",
+        ),
+        replace_existing=True,
+    )
+    t = _toc("attenuation (zh)", t, debug)
+
+    # --- ZDR noise + differential attenuation correction ---
+    radar.fields[zdr_name]["data"] = radar.fields[zdr_name]["data"] + zdr_offset
+    corr_zdr = radar_codes.correct_zdr(radar, zdr_name=zdr_name, snr_name=snr_name)
+    corr_zdr = np.ma.masked_where(np.ma.getmaskarray(dbz_clean), corr_zdr)
+    radar.add_field(
+        "corrected_differential_reflectivity",
+        _meta(corr_zdr.astype(np.float32), long_name="Corrected differential reflectivity", units="dB"),
+        replace_existing=True,
+    )
+    zdr_atten = attenuation.correct_attenuation_zdr(radar, gf, phidp_name="corrected_differential_phase")
+    radar.add_field("path_integrated_differential_attenuation", zdr_atten, replace_existing=True)
+    t = _toc("zdr (+ diff atten)", t, debug)
+
+    # --- Retrieval products ---
+    if use_csu:
+        dbz_arr = np.ma.filled(dbz_clean, np.nan)
+        zdr_arr = np.ma.filled(corr_zdr, np.nan)
+        kdp_arr = np.asarray(kdp)
+        rho_arr = np.asarray(rho_corr)
+        t_arr = np.ma.filled(temps, np.nan)
+
+        hid = hydrometeors.compute_hid(dbz_arr, zdr_arr, kdp_arr, rho_arr, t_arr)
+        radar.add_field(
+            "radar_echo_classification",
+            _meta(
+                np.ma.masked_equal(hid.astype(np.int16), 0),
+                long_name="Hydrometeor classification",
+                units="1",
+                comments=HID_COMMENT,
+            ),
+            replace_existing=True,
+        )
+
+        rain = hydrometeors.get_rainfall_estimate(dbz_arr, zdr_arr, kdp_arr, t_arr, southern_ocean)
+        radar.add_field(
+            "radar_estimated_rain_rate",
+            _meta(
+                rain.astype(np.float32),
+                long_name="Rainfall rate",
+                units="mm h-1",
+                standard_name="rainfall_rate",
+                comment="Southern-Ocean coefficient set." if southern_ocean else "Tropical coefficient set.",
+            ),
+            replace_existing=True,
+        )
+
+        nw, d0 = hydrometeors.get_dsd_estimate(dbz_arr, zdr_arr, t_arr)
+        radar.add_field(
+            "normalized_intercept_parameter",
+            _meta(nw.astype(np.float32), long_name="Normalized intercept parameter (log10 Nw)", units="log10(mm-1 m-3)"),
+            replace_existing=True,
+        )
+        radar.add_field(
+            "median_volume_diameter",
+            _meta(d0.astype(np.float32), long_name="Median volume diameter D0", units="mm"),
+            replace_existing=True,
+        )
+
+        snow = hydrometeors.get_snowfall_estimate(dbz_arr, kdp_arr, t_arr)
+        radar.add_field(
+            "radar_estimated_snow_rate",
+            _meta(snow.astype(np.float32), long_name="Snowfall rate", units="mm h-1"),
+            replace_existing=True,
+        )
+        t = _toc("products (hid/rain/dsd)", t, debug)
+
+    # --- Rename surviving raw ODIM fields to CF/Radial verbose names ---
+    rename = {
+        th_name: "total_power",
+        dbz_name: "reflectivity",
+        zdr_name: "differential_reflectivity",
+        vel_name: "velocity",
+        phidp_name: "differential_phase",
+    }
+    for old, new in rename.items():
+        if old in radar.fields and old != new:
+            radar.add_field(new, radar.fields.pop(old), replace_existing=True)
+
+    # --- Drop everything not in the published set ---
+    for key in list(radar.fields.keys()):
+        if key not in KEEP_FIELDS:
+            radar.fields.pop(key, None)
+
+    # --- Finalise metadata, fill missing values, return ---
+    radar_codes.set_significant_digits(radar)
+    radar_codes.correct_standard_name(radar)
+    radar_codes.coverage_content_type(radar)
+    radar_codes.fill_missing(radar)
+    t = _toc("finalise", t, debug)
+
+    if debug:
+        print(f"  [{'TOTAL production_line':<22}] {time.time() - st:7.3f} s")
+
+    return radar
+
+
+def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True, debug=False):
+    """
+    Run the production line and write the CF/Radial netCDF output.
+
+    Parameters
+    ----------
+    radar_file_name : str
         Name of the input radar file.
-    outpath: str
-        Path for saving output data.
-    do_dealiasing: bool
-        Dealias velocity.
-    use_unravel: bool
-        Use of UNRAVEL for dealiasing the velocity
+    outpath : str
+        Root path for saving output data.
+    do_dealiasing : bool
+        Dealias velocity with UNRAVEL.
+    use_csu : bool
+        Compute HID/rainfall/DSD/snow products.
+    debug : bool
+        If True, print per-step and write timings.
     """
     today = datetime.datetime.utcnow()
 
-    voyage_directory = radar_file_name.split("/")[-3]
     datestr = re.findall("[0-9]{8}", os.path.basename(radar_file_name))[0]
-    # Create output directories.
-    _mkdir(outpath)
-    outpath_ppi = os.path.join(outpath, "ppi")
-    _mkdir(outpath_ppi)
-    outpath_ppi = os.path.join(outpath_ppi, datestr)
+    outpath_ppi = os.path.join(outpath, "ppi", datestr)
     _mkdir(outpath_ppi)
 
-    # Generate output file name.
-    outfilename = os.path.basename(radar_file_name).replace(".hdf", ".cfradial.nc")
+    base = os.path.basename(radar_file_name)
+    outfilename = re.sub(r"\.(hdf|h5|nc)$", "", base) + ".cfradial.nc"
     outfilename = os.path.join(outpath_ppi, outfilename)
-    # Check if output file already exists.
     if os.path.isfile(outfilename):
         print(f"Output file {outfilename} already exists.")
         return None
 
-    # Business start here.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        radar = production_line(radar_file_name, do_dealiasing=do_dealiasing, use_csu=use_csu)
+        radar = production_line(radar_file_name, do_dealiasing=do_dealiasing, use_csu=use_csu, debug=debug)
         if radar is None:
             print(f"{radar_file_name} has not been processed. Check logs.")
             return None
@@ -97,16 +413,10 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True)
     radar_start_date = cftime.num2pydate(radar.time["data"][0], radar.time["units"])
     radar_end_date = cftime.num2pydate(radar.time["data"][-1], radar.time["units"])
 
-    # Lat/lon informations
     latitude = radar.gate_latitude["data"]
     longitude = radar.gate_longitude["data"]
-    maxlon = longitude.max()
-    minlon = longitude.min()
-    maxlat = latitude.max()
-    minlat = latitude.min()
-    origin_altitude = radar.altitude["data"][0]
-    origin_latitude = radar.latitude["data"][0]
-    origin_longitude = radar.longitude["data"][0]
+    maxlon, minlon = longitude.max(), longitude.min()
+    maxlat, minlat = latitude.max(), latitude.min()
 
     unique_id = str(uuid.uuid4())
     metadata = {
@@ -133,9 +443,9 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True)
         "keywords_vocabulary": "NASA Global Change Master Directory (GCMD) Science Keywords",
         "license": "CC BY-NC-SA 4.0",
         "naming_authority": "au.gov.bom",
-        "origin_altitude": origin_altitude,
-        "origin_latitude": origin_latitude,
-        "origin_longitude": origin_longitude,
+        "origin_altitude": radar.altitude["data"][0],
+        "origin_latitude": radar.latitude["data"][0],
+        "origin_longitude": radar.longitude["data"][0],
         "platform_is_mobile": "true",
         "processing_level": "L2",
         "project": "OPOL",
@@ -155,208 +465,9 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True)
     }
     radar.metadata = metadata
 
-    # Write results
+    tw = time.time()
     pyart.io.write_cfradial(outfilename, radar, format="NETCDF4")
+    if debug:
+        print(f"  [{'write_cfradial':<22}] {time.time() - tw:7.3f} s")
 
     return None
-
-
-def production_line(radar_file_name, do_dealiasing=True, use_csu=True):
-    """
-    Production line for correcting and estimating OPOL data radar parameters.
-    The naming convention for these parameters is assumed to be DBZ, ZDR, VEL,
-    PHIDP, KDP, SNR, RHOHV, and NCP. KDP, NCP, and SNR are optional and can be
-    recalculated.
-
-    Parameters:
-    ===========
-    radar_file_name: str
-        Name of the input radar file.
-    do_dealiasing: bool
-        Dealias velocity.
-    use_unravel: bool
-        Use of UNRAVEL for dealiasing the velocity
-
-    Returns:
-    ========
-    radar: Object
-        Py-ART radar structure.
-
-    PLAN:
-    =====
-    01/ Read input radar file.
-    02/ Check if radar file OK (no problem with azimuth and reflectivity).
-    03/ Get radar date.
-    04/ Check if NCP field exists (creating a fake one if it doesn't)
-    05/ Check if RHOHV field exists (creating a fake one if it doesn't)
-    06/ Compute SNR and temperature using radiosoundings.
-    07/ Correct RHOHV using Ryzhkov algorithm.
-    08/ Create gatefilter (remove noise and incorrect data).
-    09/ Correct ZDR using Ryzhkov algorithm.
-    10/ Compute Giangrande's PHIDP using pyart.
-    11/ Unfold velocity.
-    12/ Compute attenuation for ZH
-    13/ Compute attenuation for ZDR
-    16/ Removing fake/temporary fieds.
-    17/ Rename fields to pyart standard names.
-    """
-    FIELDS_NAMES = [
-        ("VEL", "velocity"),
-        ("VRAD", "velocity"),
-        ("VRADH", "velocity"),
-        ("VEL_UNFOLDED", "corrected_velocity"),
-        ("TH", "total_power"),
-        ("DBZ", "reflectivity"),
-        ("DBZH", "reflectivity"),
-        ("DBZH_CLEAN", "corrected_reflectivity"),
-        ("DBZ_CORR_ORIG", "corrected_reflectivity_edge"),
-        ("RHOHV_CORR", "cross_correlation_ratio"),
-        ("ZDR", "differential_reflectivity"),
-        ("ZDR_CORR", "corrected_differential_reflectivity"),
-        ("PHIDP", "differential_phase"),
-        ("PHIDP_BRINGI", "bringi_differential_phase"),
-        ("PHIDP_GG", "giangrande_differential_phase"),
-        ("PHIDP_PHIDO", "corrected_differential_phase"),
-        ("KDP", "specific_differential_phase"),
-        ("KDP_BRINGI", "bringi_specific_differential_phase"),
-        ("KDP_GG", "giangrande_specific_differential_phase"),
-        ("KDP_PHIDO", "corrected_specific_differential_phase"),
-        ("WIDTH", "spectrum_width"),
-        ("WRAD", "spectrum_width"),
-        ("WRADH", "spectrum_width"),
-        ("SNR", "signal_to_noise_ratio"),
-        ("NCP", "normalized_coherent_power"),
-        ("DBZV", "reflectivity_v"),
-        ("WRADV", "spectrum_width_v"),
-        ("SNRV", "signal_to_noise_ratio_v"),
-        ("SQIV", "normalized_coherent_power_v"),
-    ]
-
-    radar = radar_codes.read_radar(radar_file_name)
-    dbz_name = radar_codes.get_corr_refl(radar)
-    # Correct OceanPOL offset.
-    if radar.nsweeps < 10:
-        return None
-
-    # Correct time units.
-    if "since " not in radar.time["units"]:
-        # Signal processing forgot (sometime) a space in generating the unit.
-        radar.time["units"] = radar.time["units"].replace("since", "since ")
-    radar_start_date = cftime.num2pydate(radar.time["data"][0], radar.time["units"])
-
-    try:
-        radar.fields["TH"]
-    except KeyError:
-        radar.add_field("TH", copy.deepcopy(radar.fields[dbz_name]))
-
-    # ZDR and DBZ calibration factor for OCEANPol before YMC experiment (included).
-    if radar_start_date.year <= 2020:
-        radar.fields["ZDR"]["data"] += 0.7
-        radar.fields[dbz_name]["data"] += 3.5
-
-    fake_ncp = False
-    if "NCP" not in radar.fields.keys():
-        radar.add_field("NCP", radar.fields["SQI"])
-        fake_ncp = True
-
-    try:
-        _ = radar.fields['VEL']
-    except KeyError:
-        do_dealiasing = False
-
-    # Correct data type manually
-    try:
-        radar.longitude["data"] = np.ma.masked_invalid(radar.longitude["data"].astype(np.float32))
-        radar.latitude["data"] = np.ma.masked_invalid(radar.latitude["data"].astype(np.float32))
-        radar.altitude["data"] = np.ma.masked_invalid(radar.altitude["data"].astype(np.int32))
-    except Exception:
-        pass
-
-    # Check if radar reflecitivity field is correct.
-    if not radar_codes.check_reflectivity(radar, dbz_name):
-        raise TypeError(f"Reflectivity field is empty in {radar_file_name}.")
-
-    # Correct RHOHV
-    rho_corr = radar_codes.correct_rhohv(radar)
-    radar.add_field_like("RHOHV", "RHOHV_CORR", rho_corr, replace_existing=True)
-
-    # Correct ZDR
-    corr_zdr = radar_codes.correct_zdr(radar)
-    radar.add_field_like("ZDR", "ZDR_CORR", corr_zdr, replace_existing=True)
-
-    # Temperature
-    height, temperature = radar_codes.temperature_profile(radar)
-    radar.add_field("temperature", temperature, replace_existing=True)
-    radar.add_field("height", height, replace_existing=True)
-
-    # GateFilter
-    gatefilter = filtering.do_gatefilter_opol(radar, refl_name=dbz_name, rhohv_name="RHOHV_CORR", zdr_name="ZDR")
-    radar.fields[dbz_name]["data"][gatefilter.gate_excluded] = np.NaN
-    radar.fields["ZDR_CORR"]["data"][gatefilter.gate_excluded] = np.NaN
-    # radar.add_field("air_echo_classification", echoclass, replace_existing=True)
-
-    phidp, kdp = phase.phido(radar, gatefilter, dbz_name)
-    radar.add_field("PHIDP_PHIDO", phidp)
-    radar.add_field("KDP_PHIDO", kdp)
-    phidp_field_name = "PHIDP_PHIDO"
-    kdp_field_name = "KDP_PHIDO"
-
-    # Unfold VELOCITY
-    if do_dealiasing:
-        vdop_unfold = radar_codes.unravel(radar, gatefilter)
-        radar.add_field("VEL_UNFOLDED", vdop_unfold, replace_existing=True)
-
-    # Correct attenuation ZH and ZDR and hardcode gatefilter
-    atten = attenuation.correct_attenuation_zh_pyart(radar, refl_field=dbz_name, phidp_field=phidp_field_name)
-    radar.add_field("path_integrated_attenuation", atten)
-    radar.fields[dbz_name]["comment"] = (
-        "Attenuation has not been corrected. Please consider added the 'path_integrated_attenuation' "
-        "to this field to take into account the attenuation."
-        )
-
-    zdr_corr = attenuation.correct_attenuation_zdr(radar, gatefilter, phidp_name=phidp_field_name)
-    radar.add_field("path_integrated_differential_attenuation", zdr_corr)
-
-    if use_csu:
-        phidp_bringi, kdp_bringi = phase.phidp_bringi(radar, gatefilter, refl_field=dbz_name)
-        radar.add_field("PHIDP_BRINGI", phidp_bringi)
-        radar.add_field("KDP_BRINGI", kdp_bringi)
-
-        # Hydrometeors classification
-        hydro_class = hydrometeors.hydrometeor_classification(
-            radar, gatefilter, refl_name=dbz_name, kdp_name="KDP_BRINGI", zdr_name="ZDR_CORR"
-        )
-
-        radar.add_field("radar_echo_classification", hydro_class, replace_existing=True)
-
-        # Rainfall rate
-        rainfall = hydrometeors.rainfall_rate(
-            radar, gatefilter, kdp_name=kdp_field_name, refl_name=dbz_name, zdr_name="ZDR_CORR"
-        )
-        radar.add_field("radar_estimated_rain_rate", rainfall)
-
-    # Remove obsolete fields:
-    if fake_ncp:
-        _ = radar.fields.pop("NCP")
-
-    for obsolete_key in ["Refl", "temperature", "PHI_UNF", "PHI_CORR", "height", "TV", "RHOHV"]:
-        try:
-            radar.fields.pop(obsolete_key)
-        except KeyError:
-            continue
-
-    radar_codes.set_significant_digits(radar)
-    # Change the temporary working name of fields to the one define by the user.
-    for old_key, new_key in FIELDS_NAMES:
-        try:
-            radar.add_field(new_key, radar.fields.pop(old_key), replace_existing=True)
-        except KeyError:
-            continue
-
-    # Correct the standard_name metadata:
-    radar_codes.correct_standard_name(radar)
-    # ACDD-1.3 compliant metadata:
-    radar_codes.coverage_content_type(radar)
-
-    return radar
-
