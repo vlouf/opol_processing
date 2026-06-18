@@ -1,14 +1,18 @@
 """
-Gate filters for OceanPOL processing.
+Gate filters and numba cleaning kernels for OceanPOL processing.
 
 Three role-separated gate filters are built, each reproducing an oceanpol_kit
-mask using Py-ART's GateFilter idiom (they are intentionally NOT merged: the
-masks serve opposite purposes and merging reintroduces clear-air velocity loss
-and PHIDP streaks):
+mask (they are intentionally NOT merged: the masks serve opposite purposes and
+merging reintroduces clear-air velocity loss and PHIDP streaks):
 
 - ``do_gatefilter_opol``    : reflectivity cleaning (hydrometeor mask).
 - ``do_precip_gatefilter``  : strict precipitation gate for phase processing.
 - ``do_velocity_gatefilter``: permissive coherence gate for velocity dealiasing.
+
+The despeckle / texture kernels (`area_std`, `speckle_filter`, `despeckle_mask`)
+are the oceanpol_kit numba implementations, ported verbatim. They replace
+``pyart.correct.despeckle_field`` (connected-component labelling), which is far
+too slow per volume.
 
 @title: filtering
 @author: Valentin Louf <valentin.louf@bom.gov.au>
@@ -17,7 +21,10 @@ and PHIDP streaks):
 .. autosummary::
     :toctree: generated/
 
-    range_texture
+    area_std
+    speckle_filter
+    despeckle_mask
+    get_hydrometeor_mask
     do_gatefilter_opol
     do_precip_gatefilter
     do_velocity_gatefilter
@@ -25,101 +32,191 @@ and PHIDP streaks):
 import pyart
 import numpy as np
 
-from scipy.ndimage import uniform_filter1d
+from numba import njit
 
 
-def range_texture(data: np.ndarray, winlen: int = 10) -> np.ndarray:
+# ---------------------------------------------------------------------------
+# Numba kernels (ported verbatim from oceanpol_kit)
+# ---------------------------------------------------------------------------
+@njit(cache=True)
+def area_std(rawphi: np.ndarray, winlen: int = 10) -> np.ndarray:
     """
-    Windowed standard deviation along range (texture), per ray.
-
-    Vectorised, NaN-aware replacement for the oceanpol_kit numba ``area_std``.
-    The windowed standard deviation is computed as ``sqrt(E[x^2] - E[x]^2)``
-    over each range window using ``scipy.ndimage.uniform_filter1d`` (C-level,
-    no per-ray Python loop), ignoring masked/NaN gates. Gates with no valid
-    neighbours return 0.
+    Standard deviation of a sliding window along range (texture), per ray.
 
     Parameters
     ----------
-    data : np.ndarray
-        2D array (nrays, ngates).
+    rawphi : np.ndarray
+        2D array (na, nr), float64.
     winlen : int, optional
-        Range window length (default 10).
+        Sliding window length (default 10).
 
     Returns
     -------
     np.ndarray
-        2D texture array (nrays, ngates), float64.
+        2D texture array, same shape as ``rawphi``.
     """
-    arr = np.ma.filled(np.ma.asarray(data, dtype="float64"), np.nan)
-    valid = np.isfinite(arr)
-    x0 = np.where(valid, arr, 0.0)
+    na, nr = rawphi.shape
+    area_phi = np.zeros_like(rawphi)
+    for i in range(na):
+        for j in range(nr - winlen):
+            window = rawphi[i, j : (j + winlen)]
+            area_phi[i, j] = np.std(window)
+        for j in range(nr - 1, nr - winlen - 1, -1):
+            window = rawphi[i, j - winlen : j]
+            area_phi[i, j] = np.std(window)
 
-    # uniform_filter1d returns the window *mean*; multiply by winlen to recover
-    # the window sum, so masked gates (count < winlen) are handled correctly.
-    n = uniform_filter1d(valid.astype("float64"), winlen, axis=1, mode="nearest") * winlen
-    s1 = uniform_filter1d(x0, winlen, axis=1, mode="nearest") * winlen
-    s2 = uniform_filter1d(x0 * x0, winlen, axis=1, mode="nearest") * winlen
-
-    with np.errstate(invalid="ignore", divide="ignore"):
-        mean = s1 / n
-        var = s2 / n - mean * mean
-
-    var[~np.isfinite(var)] = 0.0
-    var[var < 0] = 0.0  # guard tiny negative values from round-off
-    return np.sqrt(var)
+    return area_phi
 
 
+@njit(cache=True)
+def speckle_filter(data: np.ndarray, mask: np.ndarray, min_dbz: float = -10.0, min_neighbours: int = 3) -> np.ndarray:
+    """
+    Remove speckle from radar reflectivity.
+
+    A gate is retained if it is above ``min_dbz`` and either (a) it is a masked
+    (noise) gate surrounded by enough non-masked neighbours, or (b) it has at
+    least ``min_neighbours`` of its 8 neighbours above ``min_dbz``. All other
+    gates are set to NaN.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        2D reflectivity (float64), with NaN where already masked.
+    mask : np.ndarray
+        2D mask (int8), 1 = noise/excluded gate, 0 = kept.
+    min_dbz : float, optional
+        Minimum reflectivity to consider (default -10).
+    min_neighbours : int, optional
+        Minimum number of qualifying neighbours to retain a gate (default 3).
+
+    Returns
+    -------
+    np.ndarray
+        2D filtered reflectivity (NaN outside retained gates).
+    """
+    ny, nx = data.shape
+    copy = np.zeros((ny, nx)) + np.nan
+
+    for y in range(1, ny - 1):
+        for x in range(1, nx - 1):
+            if data[y][x] <= min_dbz:
+                continue
+
+            if mask[y][x] == 1:
+                count_mask = (
+                    (mask[y - 1, x - 1] == 0)
+                    + (mask[y - 1, x] == 0)
+                    + (mask[y - 1, x + 1] == 0)
+                    + (mask[y, x - 1] == 0)
+                    + (mask[y, x + 1] == 0)
+                    + (mask[y + 1, x - 1] == 0)
+                    + (mask[y + 1, x] == 0)
+                    + (mask[y + 1, x + 1] == 0)
+                )
+                if count_mask > min_neighbours:
+                    copy[y][x] = data[y][x]
+                    continue
+
+            count = (
+                (data[y - 1, x - 1] > min_dbz)
+                + (data[y - 1, x] > min_dbz)
+                + (data[y - 1, x + 1] > min_dbz)
+                + (data[y, x - 1] > min_dbz)
+                + (data[y, x + 1] > min_dbz)
+                + (data[y + 1, x - 1] > min_dbz)
+                + (data[y + 1, x] > min_dbz)
+                + (data[y + 1, x + 1] > min_dbz)
+            )
+
+            if count >= min_neighbours:
+                copy[y][x] = data[y][x]
+    return copy
+
+
+@njit(cache=True)
+def despeckle_mask(mask: np.ndarray, min_neighbours: int = 2) -> np.ndarray:
+    """
+    Remove isolated True gates from a boolean keep-mask.
+
+    A gate is retained only if at least ``min_neighbours`` of its 8 immediate
+    neighbours are also True.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        2D boolean array (True = keep).
+    min_neighbours : int, optional
+        Minimum number of True neighbours required (default 2).
+
+    Returns
+    -------
+    np.ndarray
+        Despeckled boolean array.
+    """
+    ny, nx = mask.shape
+    out = np.zeros((ny, nx), dtype=np.bool_)
+    for y in range(ny):
+        for x in range(nx):
+            if not mask[y, x]:
+                continue
+            count = 0
+            for dy in range(-1, 2):
+                for dx in range(-1, 2):
+                    if dy == 0 and dx == 0:
+                        continue
+                    yy = y + dy
+                    xx = x + dx
+                    if 0 <= yy < ny and 0 <= xx < nx and mask[yy, xx]:
+                        count += 1
+            if count >= min_neighbours:
+                out[y, x] = True
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _filled(data) -> np.ndarray:
+    """Contiguous float64 view of a (masked) field, masked entries -> NaN."""
+    return np.ascontiguousarray(np.ma.filled(np.ma.asarray(data, dtype="float64"), np.nan))
+
+
+def get_hydrometeor_mask(dbz: np.ndarray, phidp: np.ndarray, rhohv: np.ndarray) -> np.ndarray:
+    """
+    Hydrometeor noise mask (True = remove), reproducing oceanpol_kit:
+    exclude where (PHIDP texture > 60) OR (RHOHV < 0.5) OR (refl < -20), but
+    rescue gates where RHOHV > 0.90.
+    """
+    area = area_std(_filled(phidp))
+    pos = (area > 60) | (rhohv < 0.5) | (dbz < -20)
+    pos[rhohv > 0.90] = False
+    return pos
+
+
+# ---------------------------------------------------------------------------
+# Gate filters
+# ---------------------------------------------------------------------------
 def do_gatefilter_opol(
     radar,
     refl_name: str = "total_power",
     rhohv_name: str = "cross_correlation_ratio",
     phidp_name: str = "PHIDP",
-    despeckle_size: int = 5,
 ) -> "pyart.filters.GateFilter":
     """
-    Reflectivity-cleaning gate filter, reproducing oceanpol_kit's
-    ``get_hydrometeor_mask``:
+    Reflectivity-cleaning gate filter from ``get_hydrometeor_mask`` thresholds.
 
-        exclude where (PHIDP texture > 60) OR (RHOHV < 0.5) OR (refl < -20),
-        but rescue gates where RHOHV > 0.90; then despeckle.
-
-    A temporary ``PHIDP_TEXTURE`` field is added and removed.
-
-    Parameters
-    ----------
-    radar : pyart.core.Radar
-        Py-ART radar structure.
-    refl_name : str
-        Reflectivity field name (cleaning is based on total power).
-    rhohv_name : str
-        (Corrected) cross-correlation ratio field name.
-    phidp_name : str
-        Raw differential phase field name (for the texture estimate).
-    despeckle_size : int, optional
-        Minimum speckle size for ``despeckle_field`` (default 5).
-
-    Returns
-    -------
-    pyart.filters.GateFilter
-        Gate filter excluding non-hydrometeor / noise gates.
+    The returned filter carries the hydrometeor noise mask; the actual speckle
+    removal on the reflectivity data is done with the numba ``speckle_filter``
+    in the production line (faster and matching oceanpol_kit).
     """
-    texture = range_texture(radar.fields[phidp_name]["data"], winlen=10)
-    radar.add_field(
-        "PHIDP_TEXTURE",
-        {"data": texture, "long_name": "phidp_texture", "units": "degree"},
-        replace_existing=True,
-    )
+    dbz = _filled(radar.fields[refl_name]["data"])
+    phidp = _filled(radar.fields[phidp_name]["data"])
+    rhohv = _filled(radar.fields[rhohv_name]["data"])
+
+    mask = get_hydrometeor_mask(dbz, phidp, rhohv)
 
     gf = pyart.filters.GateFilter(radar)
-    gf.exclude_above("PHIDP_TEXTURE", 60)
-    gf.exclude_below(rhohv_name, 0.5)
-    gf.exclude_below(refl_name, -20.0)
-    # Rescue high-correlation gates (the pos[rhohv > 0.90] = 0 override).
-    gf.include_above(rhohv_name, 0.90)
-
-    gf = pyart.correct.despeckle_field(radar, refl_name, gatefilter=gf, size=despeckle_size)
-
-    radar.fields.pop("PHIDP_TEXTURE", None)
+    gf.exclude_gates(mask)
     return gf
 
 
@@ -132,16 +229,8 @@ def do_precip_gatefilter(
     snr_min: float = 3.0,
 ) -> "pyart.filters.GateFilter":
     """
-    Strict precipitation gate filter, reproducing oceanpol_kit's
-    ``get_precip_mask`` (RHOHV >= 0.8, SNR >= 3 dB, finite reflectivity).
-
-    Applied before phase processing so KDP noise does not accumulate along the
-    ray over clear air.
-
-    Returns
-    -------
-    pyart.filters.GateFilter
-        Gate filter; non-excluded gates are genuine precipitation.
+    Strict precipitation gate filter (RHOHV >= 0.8, SNR >= 3 dB, finite refl),
+    reproducing ``get_precip_mask``. Applied before phase processing.
     """
     gf = pyart.filters.GateFilter(radar)
     gf.exclude_below(rhohv_name, rho_min)
@@ -158,60 +247,30 @@ def do_velocity_gatefilter(
     sqi_min: float = 0.4,
     texture_max: float = None,
     texture_win: int = 5,
-    despeckle_size: int = 3,
+    min_neighbours: int = 2,
 ) -> "pyart.filters.GateFilter":
     """
-    Permissive coherence gate filter for velocity, reproducing oceanpol_kit's
-    ``get_velocity_mask``.
-
-    The discriminator is coherence and signal presence, not signal strength:
-    finite velocity, finite total power (no power -> receiver noise), SQI above
-    threshold, optional velocity texture, then despeckle. SNR/RHOHV are
-    deliberately not used so clear-air coherent velocity is preserved.
-
-    Parameters
-    ----------
-    radar : pyart.core.Radar
-        Py-ART radar structure.
-    vel_name : str
-        Raw (folded) Doppler velocity field name.
-    sqi_name : str or None
-        Signal-quality-index field name (primary discriminator). If None, a
-        velocity-texture threshold of 6.0 is used instead.
-    th_name : str
-        Total-power field name (detection gate).
-    sqi_min : float, optional
-        Minimum SQI to keep a gate (default 0.4).
-    texture_max : float, optional
-        If set, reject gates with velocity texture above this value. Off by
-        default when SQI is available; 6.0 is used automatically if SQI is not.
-    texture_win : int, optional
-        Range window for the texture estimate (default 5).
-    despeckle_size : int, optional
-        Minimum speckle size for ``despeckle_field`` (default 3).
-
-    Returns
-    -------
-    pyart.filters.GateFilter
-        Gate filter; non-excluded gates are coherent velocity.
+    Permissive coherence gate filter for velocity, reproducing
+    ``get_velocity_mask``: finite velocity, finite total power (no power ->
+    receiver noise), SQI above threshold, optional velocity texture, then a
+    numba despeckle. SNR/RHOHV are deliberately not used so coherent clear-air
+    velocity is preserved.
     """
-    gf = pyart.filters.GateFilter(radar)
-    gf.exclude_invalid(vel_name)
-    gf.exclude_invalid(th_name)  # no total power -> velocity is receiver noise
-    if sqi_name is not None and sqi_name in radar.fields:
-        gf.exclude_below(sqi_name, sqi_min)
+    vel = _filled(radar.fields[vel_name]["data"])
+    good = np.isfinite(vel)
+    good &= np.isfinite(_filled(radar.fields[th_name]["data"]))
 
-    use_texture = texture_max if texture_max is not None else (6.0 if sqi_name is None else None)
+    has_sqi = sqi_name is not None and sqi_name in radar.fields
+    if has_sqi:
+        good &= _filled(radar.fields[sqi_name]["data"]) >= sqi_min
+
+    use_texture = texture_max if texture_max is not None else (6.0 if not has_sqi else None)
     if use_texture is not None:
-        texture = range_texture(radar.fields[vel_name]["data"], winlen=texture_win)
-        radar.add_field(
-            "VRAD_TEXTURE",
-            {"data": texture, "long_name": "velocity_texture", "units": "m s-1"},
-            replace_existing=True,
-        )
-        gf.exclude_above("VRAD_TEXTURE", use_texture)
+        texture = area_std(vel, texture_win)
+        good &= texture <= use_texture
 
-    gf = pyart.correct.despeckle_field(radar, vel_name, gatefilter=gf, size=despeckle_size)
+    good = despeckle_mask(np.ascontiguousarray(good), min_neighbours)
 
-    radar.fields.pop("VRAD_TEXTURE", None)
+    gf = pyart.filters.GateFilter(radar)
+    gf.exclude_gates(~good)
     return gf

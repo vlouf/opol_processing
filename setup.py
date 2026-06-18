@@ -19,6 +19,7 @@ AUTHOR = "Valentin Louf"
 REQUIRED = [
     "arm_pyart",
     "numpy",
+    "numba",
     "pandas",
     "scipy",
     "xarray",

@@ -202,7 +202,10 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         radar, refl_name=th_name, rhohv_name="cross_correlation_ratio", phidp_name=phidp_name
     )
     th = radar.fields[th_name]["data"]
-    dbz_clean = np.ma.masked_where(gf.gate_excluded, th).astype(np.float32) + cal_offset
+    # Numba speckle filter on the masked total power (replaces pyart despeckle).
+    refl = np.ascontiguousarray(np.ma.filled(np.ma.masked_where(gf.gate_excluded, th), np.nan), dtype="float64")
+    mask_i8 = np.ascontiguousarray(gf.gate_excluded.astype(np.int8))
+    dbz_clean = filtering.speckle_filter(refl, mask_i8).astype(np.float32) + cal_offset
     dbz_clean = np.ma.masked_invalid(dbz_clean)
     radar.add_field(
         "corrected_reflectivity",
