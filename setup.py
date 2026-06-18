@@ -16,7 +16,18 @@ EMAIL = "valentin.louf@bom.gov.au"
 AUTHOR = "Valentin Louf"
 
 # What packages are required for this module to be executed?
-REQUIRED = ["arm_pyart", "numpy", "csu_radartools", "netCDF4", "scipy", "unravel"]
+REQUIRED = [
+    "arm_pyart",
+    "numpy",
+    "pandas",
+    "scipy",
+    "xarray",
+    "cftime",
+    "netCDF4",
+    "csu_radartools",
+    "unravel",
+    "phido",
+]
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -67,9 +78,7 @@ setup(
     author_email=EMAIL,
     url=URL,    
     packages=find_packages(exclude=["contrib", "docs", "tests"]),
-    package_data={"opol_processing": ["data/GM_model_radar_metechoes.pkl.gz"]},
     install_requires=REQUIRED,
-    include_package_data=True,
     license="ISC",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
