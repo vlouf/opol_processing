@@ -24,16 +24,19 @@ and PHIDP streaks):
 """
 import pyart
 import numpy as np
-import pandas as pd
+
+from scipy.ndimage import uniform_filter1d
 
 
 def range_texture(data: np.ndarray, winlen: int = 10) -> np.ndarray:
     """
     Windowed standard deviation along range (texture), per ray.
 
-    Vectorised replacement for the oceanpol_kit numba ``area_std``; uses a
-    centred rolling standard deviation. Masked/NaN entries are treated as NaN
-    and the resulting texture is NaN-filled with 0.
+    Vectorised, NaN-aware replacement for the oceanpol_kit numba ``area_std``.
+    The windowed standard deviation is computed as ``sqrt(E[x^2] - E[x]^2)``
+    over each range window using ``scipy.ndimage.uniform_filter1d`` (C-level,
+    no per-ray Python loop), ignoring masked/NaN gates. Gates with no valid
+    neighbours return 0.
 
     Parameters
     ----------
@@ -48,9 +51,22 @@ def range_texture(data: np.ndarray, winlen: int = 10) -> np.ndarray:
         2D texture array (nrays, ngates), float64.
     """
     arr = np.ma.filled(np.ma.asarray(data, dtype="float64"), np.nan)
-    # rolling along range (axis 1): operate on the transpose then transpose back.
-    tex = pd.DataFrame(arr.T).rolling(window=winlen, min_periods=1, center=True).std().to_numpy().T
-    return np.nan_to_num(tex, nan=0.0)
+    valid = np.isfinite(arr)
+    x0 = np.where(valid, arr, 0.0)
+
+    # uniform_filter1d returns the window *mean*; multiply by winlen to recover
+    # the window sum, so masked gates (count < winlen) are handled correctly.
+    n = uniform_filter1d(valid.astype("float64"), winlen, axis=1, mode="nearest") * winlen
+    s1 = uniform_filter1d(x0, winlen, axis=1, mode="nearest") * winlen
+    s2 = uniform_filter1d(x0 * x0, winlen, axis=1, mode="nearest") * winlen
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean = s1 / n
+        var = s2 / n - mean * mean
+
+    var[~np.isfinite(var)] = 0.0
+    var[var < 0] = 0.0  # guard tiny negative values from round-off
+    return np.sqrt(var)
 
 
 def do_gatefilter_opol(
