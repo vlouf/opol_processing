@@ -1,178 +1,80 @@
 """
-Codes for correcting the differential phase and estimating KDP.
+Differential-phase processing: corrected PHIDP and specific differential phase
+(KDP) via phido's ``kdp_pyart`` (Py-ART radar interface).
+
+The non-stationary complex retrieval is used, gated by a precipitation
+GateFilter so KDP is only integrated over genuine precipitation (this prevents
+the radial PHIDP streaks that arise from integrating phase noise over clear
+air). The legacy Bringi (csu_kdp) and Giangrande (LP solver) variants have been
+removed.
 
 @title: phase
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 06/05/2024
 
 .. autosummary::
     :toctree: generated/
 
-    _fix_phidp_from_kdp
-    phidp_giangrande
-    phido
+    get_phidp
 """
-import pyart
 import numpy as np
 
-from phido import kdp_pyart
-from scipy import integrate
-from csu_radartools import csu_kdp
+import phido
 
 
-def _fix_phidp_from_kdp(phidp, kdp, r, gatefilter):
+# Non-stationary complex KDP retrieval configuration (phido.kdp_pyart).
+NONSTATIONARY_KWARGS = dict(
+    lmax=[250, 1000],   # [range, azimuth]
+    nsteps=11,
+    nit=40,
+    eps=0.0,
+    atol=1e-10,
+    limit_range=True,
+)
+
+
+def get_phidp(radar, phidp_field, gatefilter, refl, temperature):
     """
-    Correct PHIDP and KDP from spider webs.
+    Calculate the corrected differential phase (PHIDP) and specific differential
+    phase (KDP) with phido's non-stationary complex retrieval.
 
     Parameters
-    ==========
-    r:
-        Radar range.
-    gatefilter:
-        Gate filter.
-    kdp_name: str
-        Differential phase key name.
-    phidp_name: str
-        Differential phase key name.
-
-    Returns:
-    ========
-    phidp: ndarray
-        Differential phase array.
-    """
-    kdp[gatefilter.gate_excluded] = 0
-    kdp[(kdp < -4)] = 0
-    kdp[kdp > 15] = 0
-    interg = integrate.cumtrapz(kdp, r, axis=1)
-
-    phidp[:, :-1] = interg / (len(r))
-    return phidp, kdp
-
-
-def phidp_bringi(radar, gatefilter, phidp_name="PHIDP", refl_field="DBZ"):
-    """
-    Compute PHIDP and KDP Bringi.
-
-    Parameters
-    ==========
-    radar:
-        Py-ART radar data structure.
-    gatefilter:
-        Gate filter.
-    phidp_name: str
-        Differential phase key name.
-    refl_field: str
-        Reflectivity key name.
-
-    Returns:
-    ========
-    phidpb: ndarray
-        Bringi differential phase array.
-    kdpb: ndarray
-        Bringi specific differential phase array.
-    """
-    nphase = pyart.correct.phase_proc.det_sys_phase_gf(radar, gatefilter, phidp_field=phidp_name, first_gate=30)
-    if nphase is None:
-        nphase = 0
-    dp = radar.fields[phidp_name]["data"].copy()    
-    dp -= nphase
-    dz = radar.fields[refl_field]["data"].copy().filled(-9999)
-
-    # Extract dimensions
-    rng = radar.range["data"]
-    azi = radar.azimuth["data"]
-    dgate = rng[1] - rng[0]
-    [R, A] = np.meshgrid(rng, azi)
-
-    # Compute KDP bringi.
-    kdpb, phidpb, _ = csu_kdp.calc_kdp_bringi(dp, dz, R / 1e3, gs=dgate, bad=-9999, thsd=12, window=3.0, std_gate=11)
-
-    # Mask array
-    phidpb = np.ma.masked_where(phidpb == -9999, phidpb)
-    kdpb = np.ma.masked_where(kdpb == -9999, kdpb)
-
-    # Get metadata.
-    phimeta = pyart.config.get_metadata("differential_phase")
-    phimeta["data"] = phidpb
-    kdpmeta = pyart.config.get_metadata("specific_differential_phase")
-    kdpmeta["data"] = kdpb
-
-    return phimeta, kdpmeta
-
-
-def phidp_giangrande(radar, gatefilter, refl_field="DBZ", ncp_field="NCP", rhv_field="RHOHV_CORR", phidp_field="PHIDP"):
-    """
-    Phase processing using the LP method in Py-ART. A LP solver is required,
-
-    Parameters:
-    ===========
-    radar:
+    ----------
+    radar : pyart.core.Radar
         Py-ART radar structure.
-    gatefilter:
-        Gate filter.
-    refl_field: str
-        Reflectivity field label.
-    ncp_field: str
-        Normalised coherent power field label.
-    rhv_field: str
-        Cross correlation ration field label.
-    phidp_field: str
-        Differential phase label.
+    phidp_field : str
+        Name of the (raw) differential-phase field in ``radar.fields``.
+    gatefilter : pyart.filters.GateFilter
+        Precipitation gate filter; the retrieval is restricted to non-excluded
+        (precipitation) gates.
+    refl : np.ndarray
+        2D reflectivity (dBZ), used to suppress spurious negative KDP.
+    temperature : np.ndarray
+        2D temperature (degC).
 
-    Returns:
-    ========
-    phidp_gg: dict
-        Field dictionary containing processed differential phase shifts.
-    kdp_gg: dict
-        Field dictionary containing recalculated differential phases.
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        (phidp_corr, kdp) as NaN-filled float64 arrays (NaN outside the
+        precipitation gate filter).
     """
-    unfphidic = pyart.correct.dealias_unwrap_phase(
-        radar, gatefilter=gatefilter, skip_checks=True, vel_field=phidp_field, nyquist_vel=90
-    )
-
-    radar.add_field_like(phidp_field, "PHITMP", unfphidic["data"])
-
-    phidp_gg, kdp_gg = pyart.correct.phase_proc_lp(
+    kdp_meta, phidp_meta = phido.kdp_pyart(
         radar,
-        0.0,
-        LP_solver="cylp",
-        ncp_field=ncp_field,
-        refl_field=refl_field,
-        rhv_field=rhv_field,
-        phidp_field="PHITMP",
+        phidp_field,
+        gatefilter=gatefilter,
+        stationary=False,
+        complex=True,
+        **NONSTATIONARY_KWARGS,
     )
 
-    phidp_gg["data"], kdp_gg["data"] = _fix_phidp_from_kdp(
-        phidp_gg["data"], kdp_gg["data"], radar.range["data"], gatefilter
-    )
+    phidp_corr = np.ma.filled(phidp_meta["data"], np.nan).astype("float64")
+    kdp = np.ma.filled(kdp_meta["data"], np.nan).astype("float64")
 
-    try:
-        # Remove temp variables.
-        radar.fields.pop("unfolded_differential_phase")
-        radar.fields.pop("PHITMP")
-    except Exception:
-        pass
+    # Suppress spurious negative KDP in warm, light rain (NaN comparisons are
+    # False, so masked/absent gates are left untouched).
+    refl_a = np.ma.filled(np.ma.asarray(refl, dtype="float64"), np.nan)
+    temp_a = np.ma.filled(np.ma.asarray(temperature, dtype="float64"), np.nan)
+    cleanup = (kdp < 0) & (refl_a < 40) & (temp_a >= 0)
+    kdp[cleanup] = 0.0
 
-    phidp_gg["data"] = phidp_gg["data"].astype(np.float32)
-    phidp_gg["_Least_significant_digit"] = 4
-    kdp_gg["data"] = kdp_gg["data"].astype(np.float32)
-    kdp_gg["_Least_significant_digit"] = 4
-
-    return phidp_gg, kdp_gg
-
-
-def phido(radar, gatefilter, refl_field, rhv_field="RHOHV_CORR", phidp_field="PHIDP", zdr_name="ZDR_CORR"):
-    # filter bad data
-    gatefilter = pyart.correct.GateFilter(radar)
-    gatefilter.exclude_masked(refl_field)
-    gatefilter.exclude_below(rhv_field, 0.95)
-    gatefilter.exclude_outside(zdr_name, -1.0, 4.0)
-
-    # calculate kdp
-    kdp_meta, phidp_meta = kdp_pyart(radar, phidp_field, gatefilter, window = (3, 7)) 
-    kdp_meta["data"] = kdp_meta["data"].astype(np.float32)
-    phidp_meta["data"] = phidp_meta["data"].astype(np.float32)
-    radar.add_field('kdp_phido', kdp_meta, replace_existing = True)
-    radar.add_field('phidp_phido', phidp_meta, replace_existing = True)
-    return phidp_meta, kdp_meta
+    return phidp_corr, kdp
