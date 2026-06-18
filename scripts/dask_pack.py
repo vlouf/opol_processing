@@ -48,7 +48,7 @@ def buffer(infile):
         Path for saving output data.
     """
     try:
-        opol_processing.process_and_save(infile, OUTPATH, do_dealiasing=DO_DEALIASING, use_unravel=USE_UNRAVEL)
+        opol_processing.process_and_save(infile, OUTPATH, do_dealiasing=(DO_DEALIASING and USE_UNRAVEL))
     except Exception:
         traceback.print_exc()
 

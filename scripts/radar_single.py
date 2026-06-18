@@ -43,7 +43,7 @@ def main():
         warnings.simplefilter("ignore")
         import opol_processing
 
-        opol_processing.process_and_save(INFILE, OUTPATH, use_unravel=USE_UNRAVEL)
+        opol_processing.process_and_save(INFILE, OUTPATH, do_dealiasing=USE_UNRAVEL, debug=DEBUG)
 
     print(crayons.green("Process completed."))
 
@@ -71,10 +71,14 @@ calculation, and rainfall rate estimation."""
     parser.add_argument("--no-unravel", dest="unravel", action="store_false")
     parser.set_defaults(unravel=True)
 
+    parser.add_argument("--debug", dest="debug", action="store_true", help="Print per-step timings.")
+    parser.set_defaults(debug=False)
+
     args = parser.parse_args()
     INFILE = args.infile
     OUTPATH = args.outdir
     USE_UNRAVEL = args.unravel
+    DEBUG = args.debug
 
     if not os.path.isfile(INFILE):
         parser.error("Invalid input file.")
