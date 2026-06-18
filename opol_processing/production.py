@@ -198,7 +198,9 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     t = _toc("temperature", t, debug)
 
     # --- Reflectivity cleaning (hydrometeor gate filter) ---
-    gf = filtering.do_gatefilter(radar, vel_name=vel_name, sqi_name=sqi_name, th_name=th_name)
+    gf = filtering.do_gatefilter_opol(
+        radar, refl_name=th_name, rhohv_name="cross_correlation_ratio", phidp_name=phidp_name
+    )
     th = radar.fields[th_name]["data"]
     # Numba speckle filter on the masked total power (replaces pyart despeckle).
     refl = np.ascontiguousarray(np.ma.filled(np.ma.masked_where(gf.gate_excluded, th), np.nan), dtype="float64")
@@ -238,8 +240,9 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
 
     # --- Velocity dealiasing (coherence censoring + UNRAVEL) ---
     if do_dealiasing and vel_name in radar.fields:        
-        n_coherent = int(np.count_nonzero(~gf.gate_excluded))
-        censored = np.ma.masked_where(gf.gate_excluded, radar.fields[vel_name]["data"])
+        vgf = filtering.do_velocity_gatefilter(radar, vel_name=vel_name, sqi_name=sqi_name, th_name=th_name)
+        n_coherent = int(np.count_nonzero(~vgf.gate_excluded))
+        censored = np.ma.masked_where(vgf.gate_excluded, radar.fields[vel_name]["data"])
         if debug:
             print(f"  coherent velocity gates: {n_coherent}")
 
@@ -251,7 +254,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
             vel_meta["comment"] = f"UNRAVEL skipped ({n_coherent} coherent gates)."
         else:
             radar.add_field("VEL_CENSORED", _meta(censored, units="m s-1"), replace_existing=True)
-            vel_meta = radar_codes.unravel(radar, gf, vel_name="VEL_CENSORED", dbz_name="corrected_reflectivity")
+            vel_meta = radar_codes.unravel(radar, vgf, vel_name="VEL_CENSORED", dbz_name="corrected_reflectivity")
             radar.fields.pop("VEL_CENSORED", None)
 
         radar.add_field("corrected_velocity", vel_meta, replace_existing=True)

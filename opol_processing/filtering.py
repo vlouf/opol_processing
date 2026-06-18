@@ -173,9 +173,51 @@ def despeckle_mask(mask: np.ndarray, min_neighbours: int = 2) -> np.ndarray:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 def _filled(data) -> np.ndarray:
     """Contiguous float64 view of a (masked) field, masked entries -> NaN."""
     return np.ascontiguousarray(np.ma.filled(np.ma.asarray(data, dtype="float64"), np.nan))
+
+
+def get_hydrometeor_mask(dbz: np.ndarray, phidp: np.ndarray, rhohv: np.ndarray) -> np.ndarray:
+    """
+    Hydrometeor noise mask (True = remove), reproducing oceanpol_kit:
+    exclude where (PHIDP texture > 60) OR (RHOHV < 0.5) OR (refl < -20), but
+    rescue gates where RHOHV > 0.90.
+    """
+    area = area_std(_filled(phidp))
+    pos = (area > 60) | (rhohv < 0.5) | (dbz < -20)
+    pos[rhohv > 0.90] = False
+    return pos
+
+
+# ---------------------------------------------------------------------------
+# Gate filters
+# ---------------------------------------------------------------------------
+def do_gatefilter_opol(
+    radar,
+    refl_name: str = "total_power",
+    rhohv_name: str = "cross_correlation_ratio",
+    phidp_name: str = "PHIDP",
+) -> "pyart.filters.GateFilter":
+    """
+    Reflectivity-cleaning gate filter from ``get_hydrometeor_mask`` thresholds.
+
+    The returned filter carries the hydrometeor noise mask; the actual speckle
+    removal on the reflectivity data is done with the numba ``speckle_filter``
+    in the production line (faster and matching oceanpol_kit).
+    """
+    dbz = _filled(radar.fields[refl_name]["data"])
+    phidp = _filled(radar.fields[phidp_name]["data"])
+    rhohv = _filled(radar.fields[rhohv_name]["data"])
+
+    mask = get_hydrometeor_mask(dbz, phidp, rhohv)
+
+    gf = pyart.filters.GateFilter(radar)
+    gf.exclude_gates(mask)
+    return gf
 
 
 def do_precip_gatefilter(
@@ -183,7 +225,6 @@ def do_precip_gatefilter(
     refl_name: str = "corrected_reflectivity",
     rhohv_name: str = "cross_correlation_ratio",
     snr_name: str = "SNR",
-    sqi_name: str = "SQI",
     rho_min: float = 0.8,
     snr_min: float = 3.0,
 ) -> "pyart.filters.GateFilter":
@@ -198,7 +239,7 @@ def do_precip_gatefilter(
     return gf
 
 
-def do_gatefilter(
+def do_velocity_gatefilter(
     radar,
     vel_name: str = "VRAD",
     sqi_name: str = "SQI",
