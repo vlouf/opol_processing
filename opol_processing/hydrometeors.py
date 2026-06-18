@@ -1,147 +1,173 @@
 """
-Codes for estimating various parameters related to Hydrometeors.
+Codes for estimating hydrometeor-related parameters: hydrometeor classification
+(HID), rainfall rate, drop-size distribution (NW, D0) and snowfall rate.
+
+Ported from the oceanpol_kit reference. All functions operate on plain numpy
+arrays (NaN-filled, not masked); the production line wraps the results into
+Py-ART field dictionaries.
+
 @title: hydrometeors
 @author: Valentin Louf <valentin.louf@bom.gov.au>
 @institutions: Monash University and the Australian Bureau of Meteorology
-@date: 04/09/2020
 
 .. autosummary::
     :toctree: generated/
-    hydrometeor_classification
-    rainfall_rate
+
+    compute_hid
+    get_dsd_estimate
+    get_rainfall_estimate
+    get_snowfall_estimate
 """
-# Other Libraries
-import pyart
+from typing import Tuple
+
 import numpy as np
 
-from csu_radartools import csu_liquid_ice_mass, csu_fhc, csu_blended_rain, csu_dsd
+from csu_radartools.csu_fhc import csu_fhc_summer
 
 
-def hydrometeor_classification(
-    radar,
-    gatefilter,
-    kdp_name,
-    zdr_name,
-    refl_name="DBZ_CORR",
-    rhohv_name="RHOHV_CORR",
-    temperature_name="temperature",
-    height_name="height",
-):
+def compute_hid(
+    dbz: np.ndarray,
+    zdr: np.ndarray,
+    kdp: np.ndarray,
+    rhohv: np.ndarray,
+    temperature: np.ndarray,
+) -> np.ndarray:
     """
-    Compute hydrometeo classification.
-    Parameters:
-    ===========
-    radar:
-        Py-ART radar structure.
-    refl_name: str
-        Reflectivity field name.
-    zdr_name: str
-        ZDR field name.
-    kdp_name: str
-        KDP field name.
-    rhohv_name: str
-        RHOHV field name.
-    temperature_name: str
-        Sounding temperature field name.
-    height: str
-        Gate height field name.
-    Returns:
-    ========
-    hydro_meta: dict
-        Hydrometeor classification.
+    Hydrometeor identification using the CSU summer fuzzy-logic scheme.
+
+    Categories: 1 Drizzle; 2 Rain; 3 Ice Crystals; 4 Aggregates; 5 Wet Snow;
+    6 Vertical Ice; 7 LD Graupel; 8 HD Graupel; 9 Hail; 10 Big Drops.
+
+    Parameters
+    ----------
+    dbz, zdr, kdp, rhohv, temperature : np.ndarray
+        2D radar fields (NaN-filled). Temperature in degC.
+
+    Returns
+    -------
+    np.ndarray
+        2D classification (int-valued, 0 = no data).
     """
-    refl = radar.fields[refl_name]["data"].copy().filled(np.NaN)
-    zdr = radar.fields[zdr_name]["data"].copy().filled(np.NaN)
-    try:
-        kdp = radar.fields[kdp_name]["data"].copy().filled(np.NaN)
-    except AttributeError:
-        kdp = radar.fields[kdp_name]["data"].copy()
-    rhohv = radar.fields[rhohv_name]["data"]
-    try:
-        radar_T = radar.fields[temperature_name]["data"]
-        use_temperature = True
-    except Exception:
-        use_temperature = False
-
-    if use_temperature:
-        hydro = csu_fhc.csu_fhc_summer(dz=refl, zdr=zdr, rho=rhohv, kdp=kdp, use_temp=True, band="C", T=radar_T)
-    else:
-        hydro = csu_fhc.csu_fhc_summer(dz=refl, zdr=zdr, rho=rhohv, kdp=kdp, use_temp=False, band="C")
-
-    hydro[gatefilter.gate_excluded] = 0
-    hydro_data = np.ma.masked_equal(hydro.astype(np.int16), 0)
-
-    the_comments = (
-        "1: Drizzle; 2: Rain; 3: Ice Crystals; 4: Aggregates; "
-        + "5: Wet Snow; 6: Vertical Ice; 7: LD Graupel; 8: HD Graupel; 9: Hail; 10: Big Drops"
+    hid = csu_fhc_summer(
+        use_temp=True,
+        method="hybrid",
+        dz=dbz,
+        zdr=zdr,
+        ldr=None,
+        kdp=kdp,
+        rho=rhohv,
+        T=temperature,
+        verbose=False,
+        plot_flag=False,
+        n_types=10,
+        temp_factor=1,
+        band="C",
     )
-
-    hydro_meta = {
-        "data": hydro_data,
-        "units": " ",
-        "long_name": "Hydrometeor classification",
-        "_FillValue": np.int16(0),
-        "standard_name": "Hydrometeor_ID",
-        "comments": the_comments,
-    }
-
-    return hydro_meta
+    hid[np.isnan(dbz)] = 0
+    return hid
 
 
-def rainfall_rate(
-    radar,
-    gatefilter,
-    kdp_name,
-    zdr_name,
-    refl_name="DBZ_CORR",
-    hydro_name="radar_echo_classification",
-    temperature_name="temperature",
-):
+def get_dsd_estimate(dbz: np.ndarray, zdr: np.ndarray, temperature: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Rainfall rate algorithm from csu_radartools.
-    Parameters:
-    ===========
-    radar:
-        Py-ART radar structure.
-    refl_name: str
-        Reflectivity field name.
-    zdr_name: str
-        ZDR field name.
-    kdp_name: str
-        KDP field name.
-    hydro_name: str
-        Hydrometeor classification field name.
-    Returns:
-    ========
-    rainrate: dict
-        Rainfall rate.
+    Estimate the drop-size distribution parameters NW (log10 normalised
+    intercept) and D0 (median volume diameter, mm) from ZH and ZDR.
+
+    Only valid for liquid drops (temperature >= 0); set to NaN below freezing.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        (nw, d0).
     """
-    dbz = radar.fields[refl_name]["data"].filled(np.NaN)
-    zdr = radar.fields[zdr_name]["data"].filled(np.NaN)
-    fhc = radar.fields[hydro_name]["data"]
-    try:
-        kdp = radar.fields[kdp_name]["data"].filled(np.NaN)
-    except AttributeError:
-        kdp = radar.fields[kdp_name]["data"]
+    d0 = np.zeros_like(zdr)
+    pos = (-0.5 <= zdr) & (zdr < 1.25)
+    tmp = 0.0203 * zdr**4 - 0.1488 * zdr**3 + 0.2209 * zdr**2 + 0.5571 * zdr + 0.801
+    d0[pos] = tmp[pos]
 
-    rain, _ = csu_blended_rain.calc_blended_rain_tropical(dz=dbz, zdr=zdr, kdp=kdp, fhc=fhc, band="C")
+    pos = (1.25 <= zdr) & (zdr < 5)
+    tmp = 0.0355 * zdr**3 - 0.3021 * zdr**2 + 1.0556 * zdr + 0.6844
+    d0[pos] = tmp[pos]
 
-    rain[(gatefilter.gate_excluded) | np.isnan(rain) | (rain < 0)] = 0
+    nw = 10 ** (dbz / 10) / (0.056 * d0**7.319)
+    nw = np.log10(nw)
 
-    try:
-        temp = radar.fields[temperature_name]["data"]
-        rain[temp < 0] = 0
-    except Exception:
-        pass
+    # Only valid for positive temperatures (liquid drops)
+    nw[temperature < 0] = np.nan
+    d0[temperature < 0] = np.nan
 
-    rainrate = {
-        "long_name": "Blended Rainfall Rate",
-        "units": "mm h-1",
-        "standard_name": "rainfall_rate",
-        "_Least_significant_digit": 2,
-        "_FillValue": np.NaN,
-        "description": "Rainfall rate algorithm based on Thompson et al. 2016.",
-        "data": rain.astype(np.float32),
-    }
+    return nw, d0
 
-    return rainrate
+
+def get_rainfall_estimate(
+    zh: np.ndarray, zdr: np.ndarray, kdp: np.ndarray, temperature: np.ndarray, southern_ocean: bool
+) -> np.ndarray:
+    """
+    Estimate rainfall rate (mm h-1) from ZH, ZDR, KDP and temperature, using
+    regime-dependent coefficients (Southern-Ocean tuned set when applicable).
+
+    Parameters
+    ----------
+    zh, zdr, kdp, temperature : np.ndarray
+        2D radar fields (NaN-filled). Temperature in degC.
+    southern_ocean : bool
+        Use the Southern-Ocean coefficient set when True.
+
+    Returns
+    -------
+    np.ndarray
+        2D rainfall rate.
+    """
+    sigma_dr = 10 ** (0.1 * zdr)
+    eta_h = 10 ** (0.1 * zh)
+    rainfall = np.zeros_like(zh) + np.nan
+
+    pos = (kdp <= 0.3) & (zdr <= 0.25)
+    if southern_ocean:
+        tmp = 0.021 * eta_h**0.72
+    else:
+        tmp = 0.016 * eta_h**0.846
+    rainfall[pos] = tmp[pos]
+
+    pos = (kdp <= 0.3) & (zdr > 0.25)
+    if southern_ocean:
+        tmp = 0.0086 * eta_h**0.91 * sigma_dr ** (-4.21)
+    else:
+        tmp = 0.011 * eta_h**0.825 * sigma_dr ** (-3.055)
+    rainfall[pos] = tmp[pos]
+
+    pos = (kdp > 0.3) & (zdr <= 0.25)
+    if southern_ocean:
+        tmp = 30.62 * kdp**0.78
+    else:
+        tmp = 16.171 * kdp**0.742
+    rainfall[pos] = tmp[pos]
+
+    pos = (kdp > 0.3) & (zdr > 0.25)
+    if southern_ocean:
+        tmp = 45.70 * kdp ** (0.88) * sigma_dr ** (-1.67)
+    else:
+        tmp = 24.199 * kdp ** (0.827) * sigma_dr ** (-0.488)
+    rainfall[pos] = tmp[pos]
+
+    rainfall[np.isnan(rainfall) | (temperature <= -18)] = 0
+    return rainfall
+
+
+def get_snowfall_estimate(dbz_clean: np.ndarray, kdp: np.ndarray, temps: np.ndarray) -> np.ndarray:
+    """
+    Estimate snowfall rate from reflectivity and KDP; valid below freezing only
+    (set to NaN where temperature > 0).
+
+    Parameters
+    ----------
+    dbz_clean, kdp, temps : np.ndarray
+        2D radar fields (NaN-filled). Temperature in degC.
+
+    Returns
+    -------
+    np.ndarray
+        2D snowfall rate.
+    """
+    snow = 1.48 * kdp**0.615 * (10 ** (dbz_clean / 10)) ** 0.33
+    snow[temps > 0] = np.nan
+    return snow
