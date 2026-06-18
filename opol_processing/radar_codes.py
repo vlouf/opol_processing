@@ -319,12 +319,21 @@ def unravel(radar, gatefilter, vel_name="VRAD", dbz_name="corrected_reflectivity
     -------
     dict
         Py-ART field dictionary of the unfolded Doppler velocity.
+
+    Notes
+    -----
+    Uses UNRAVEL's defaults (in particular the default 3D strategy), matching
+    the oceanpol_kit reference call. The legacy ``strategy="long_range"`` and
+    explicit ``alpha`` from the old OPOL pipeline are not used: ``long_range``
+    runs extra continuity passes and roughly doubled the per-volume runtime.
+    The nyquist velocity (13.3 m s-1) is OceanPOL's, i.e. the value oceanpol_kit
+    reads from the ODIM metadata.
     """
     import unravel
 
     nyquist = 13.3
     unfvel = unravel.unravel_3D_pyart(
-        radar, vel_name, dbz_name, gatefilter=gatefilter, alpha=0.8, nyquist_velocity=nyquist, strategy="long_range"
+        radar, vel_name, dbz_name, gatefilter=gatefilter, nyquist_velocity=nyquist
     )
 
     vel_meta = pyart.config.get_metadata("velocity")
