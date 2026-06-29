@@ -143,6 +143,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     # strategy changed from bottom-up to top-down; downstream 3D steps assume
     # increasing elevation with sweep index).
     radar = radar_codes.order_sweeps_by_elevation(radar)
+    radar = radar_codes.sort_azimuths(radar)
     if debug:
         print(f"  sweep elevations: {np.round(np.asarray(radar.fixed_angle['data']), 2)}")
     t = _toc("order sweeps", t, debug)

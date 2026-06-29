@@ -15,6 +15,7 @@ in ``temperature.py``.
 
     resolve_fields
     read_radar
+    sort_azimuths
     check_reflectivity
     correct_rhohv
     correct_zdr
@@ -103,6 +104,75 @@ def read_radar(radar_file_name: str):
         radar = pyart.io.read(radar_file_name)
     else:
         radar = pyart.aux_io.read_odim_h5(radar_file_name, file_field_names=True)
+
+    return sort_azimuths(radar)
+
+
+def sort_azimuths(radar):
+    """
+    Sort the azimuth coordinate within each sweep, accounting for wrap-around
+    across the -180/+180 degree seam.
+
+    The radar ray ordering is re-ordered per sweep so the azimuth values are
+    monotonically increasing after unwrapping, and the matching ray-dependent
+    fields and time coordinate are reordered in the same way.
+
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Py-ART radar structure.
+
+    Returns
+    -------
+    pyart.core.Radar
+        The same radar object with sorted azimuths and aligned ray data.
+    """
+    if getattr(radar, "nsweeps", 0) <= 0:
+        return radar
+
+    azimuth = np.asarray(radar.azimuth["data"], dtype="float64")
+    elevation = np.asarray(radar.elevation["data"], dtype="float64")
+    time_data = np.asarray(radar.time["data"])
+
+    sweep_starts = np.asarray(radar.sweep_start_ray_index["data"], dtype="int64")
+    sweep_stops = np.asarray(radar.sweep_end_ray_index["data"], dtype="int64")
+
+    for sweep_idx in range(radar.nsweeps):
+        start = int(sweep_starts[sweep_idx])
+        stop = int(sweep_stops[sweep_idx]) + 1
+        if stop <= start:
+            continue
+
+        sweep_azimuth = azimuth[start:stop]
+        if sweep_azimuth.size < 2:
+            continue
+
+        valid = np.isfinite(sweep_azimuth)
+        if np.count_nonzero(valid) != sweep_azimuth.size:
+            valid_idx = np.flatnonzero(valid)
+            order = np.argsort(np.unwrap(np.deg2rad(sweep_azimuth[valid_idx]), discont=np.pi), kind="stable")
+            order_full = np.concatenate((valid_idx[order], np.flatnonzero(~valid)))
+        else:
+            order_full = np.argsort(np.unwrap(np.deg2rad(sweep_azimuth), discont=np.pi), kind="stable")
+
+        if np.array_equal(order_full, np.arange(sweep_azimuth.size)):
+            continue
+
+        azimuth[start:stop] = sweep_azimuth[order_full]
+        elevation[start:stop] = elevation[start:stop][order_full]
+        time_data[start:stop] = time_data[start:stop][order_full]
+
+        for field in radar.fields.values():
+            data = field["data"]
+            if not hasattr(data, "shape") or data.ndim < 1:
+                continue
+            if data.shape[0] != azimuth.size:
+                continue
+            field["data"][start:stop] = data[start:stop][order_full]
+
+    radar.azimuth["data"] = azimuth
+    radar.elevation["data"] = elevation
+    radar.time["data"] = time_data
     return radar
 
 
