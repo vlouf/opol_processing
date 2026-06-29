@@ -59,7 +59,7 @@ KEEP_FIELDS = {
     "reflectivity",
     "corrected_reflectivity",
     "attenuation_corrected_reflectivity",
-    "path_integrated_attenuation",
+    # "path_integrated_attenuation",
     "differential_reflectivity",
     "corrected_differential_reflectivity",
     "path_integrated_differential_attenuation",
@@ -75,6 +75,9 @@ KEEP_FIELDS = {
     "radar_estimated_snow_rate",
     "normalized_intercept_parameter",
     "median_volume_diameter",
+    "signal_to_noise_ratio",
+    "signal_quality_index",
+    "spectrum_width",
 }
 
 
@@ -154,7 +157,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     phidp_name = fields["PHIDP"]
     snr_name = fields["SNR"]
     vel_name = fields["VRAD"]
-    sqi_name = fields["SQI"]
+    sqi_name = fields["SQI"]    
 
     # Correct time units (signal processing sometimes drops a space).
     if "since " not in radar.time["units"]:
@@ -353,6 +356,9 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         zdr_name: "differential_reflectivity",
         vel_name: "velocity",
         phidp_name: "differential_phase",
+        snr_name: "signal_to_noise_ratio",
+        fields["WRAD"]: "spectrum_width",
+        sqi_name: "signal_quality_index",
     }
     for old, new in rename.items():
         if old in radar.fields and old != new:

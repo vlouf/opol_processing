@@ -38,7 +38,7 @@ FIELD_ALIASES = {
     "SNR": ["SNR", "SNRH"],
     "VRAD": ["VRAD", "VRADH"],
     "WRAD": ["WRAD", "WRADH"],
-    "SQI": ["SQI", "SQIH"],
+    "SQI": ["SQI", "SQIH"],    
 }
 
 # Fields without which the file cannot be processed.
