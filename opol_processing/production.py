@@ -34,6 +34,7 @@ import pyart
 import cftime
 import numpy as np
 import pandas as pd
+import xarray as xr
 from netCDF4 import Dataset
 
 # Custom modules.
@@ -111,115 +112,206 @@ def _mkdir(path):
 
 def _write_compressed_cfradial(radar, outfilename):
     """
-    Write PyART Radar object to CF/Radial netCDF4 with bit compression encoding.
-
-    Uses io.BytesIO (via SpooledTemporaryFile) for in-memory intermediate storage,
-    avoiding disk I/O for the temporary file. Data transformations applied during write.
-
+    Write PyART Radar object to CF/Radial netCDF4 with xarray encoding compression.
+    
+    Uses temporary file approach:
+    1. Write with PyART (uncompressed) to temp file
+    2. Read with xarray
+    3. Apply encoding dict (scale_factor/add_offset for int types)
+    4. Write final file with gzip compression
+    
     Parameters
     ----------
     radar : pyart.core.Radar
         Radar object to write.
     outfilename : str
         Output netCDF file path.
+        
+    Returns
+    -------
+    size_saved_mb : float
+        Size reduction in MB
+    size_saved_pct : float
+        Size reduction as percentage
     """
-    # Helper to get encoding for a variable
-    def get_encoding(varname):
-        encoding = {'zlib': True, 'complevel': 4}
-
-        if varname in ['corrected_reflectivity', 'reflectivity', 'attenuation_corrected_reflectivity', "total_power"]:
-            encoding.update({'dtype': np.int8, 'scale_factor': 0.5, 'add_offset': -32})
-        elif varname == 'temperature':
-            encoding.update({'dtype': np.int8, 'scale_factor': 0.1, 'add_offset': -50})
-        elif varname in ['differential_reflectivity', 'corrected_differential_reflectivity']:
-            encoding.update({'dtype': np.int8, 'scale_factor': 0.05, 'add_offset': -6})
-        elif varname in ['differential_phase', 'corrected_differential_phase', 'corrected_specific_differential_phase']:
-            encoding.update({'dtype': np.int16, 'scale_factor': 0.01, 'add_offset': 0})
-        elif varname in ['velocity', 'corrected_velocity']:
-            encoding.update({'dtype': np.int16, 'scale_factor': 0.1, 'add_offset': -65})
-        elif varname == 'cross_correlation_ratio':
-            encoding.update({'dtype': np.int8, 'scale_factor': 0.01, 'add_offset': 0})
-        elif varname in ['azimuth', 'elevation']:
-            # CF/Radial convention: float32 with 0.01 precision (2 decimal places)
-            encoding.update({'dtype': np.float32, 'scale_factor': 0.01, 'add_offset': 0})
-        elif varname in ['radar_estimated_rain_rate', 'radar_estimated_snow_rate',
-                          'normalized_intercept_parameter', 'median_volume_diameter',
-                          'signal_to_noise_ratio', 'spectrum_width', 'signal_quality_index',
-                          'path_integrated_differential_attenuation']:
-            encoding.update({'dtype': np.int16, 'scale_factor': 0.01, 'add_offset': 0})
-
-        return encoding
-
-    # Use NamedTemporaryFile with delete=False to manage the temp file explicitly
+    # Create temporary file for uncompressed intermediate
     with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
         temp_filename = tmp.name
-
+    
     try:
-        # Write Py-ART output to temporary file
+        # Step 1: Write uncompressed CF/Radial with PyART
         pyart.io.write_cfradial(temp_filename, radar, format='NETCDF4')
-
-        # Get uncompressed file size
         uncompressed_size = os.path.getsize(temp_filename)
-
-        # Read from temp file and copy to final output with encoding
-        with Dataset(temp_filename, 'r') as src:
-            with Dataset(outfilename, 'w', format='NETCDF4') as dst:
-                # Copy dimensions
-                for name, dimension in src.dimensions.items():
-                    dst.createDimension(name, len(dimension) if not dimension.isunlimited() else None)
-
-                # Copy global attributes
-                for name in src.ncattrs():
-                    dst.setncattr(name, src.getncattr(name))
-
-                # Copy variables with re-encoding
-                for name in src.variables:
-                    var = src.variables[name]
-                    dimensions = var.dimensions
-
-                    enc = get_encoding(name)
-                    dtype = enc.pop('dtype', None) or var.dtype
-                    scale_factor = enc.pop('scale_factor', None)
-                    add_offset = enc.pop('add_offset', None)
-
-                    # Extract _FillValue if it exists (must be set at creation time)
-                    fill_value = None
-                    if '_FillValue' in var.ncattrs():
-                        fill_value = var.getncattr('_FillValue')
-
-                    new_var = dst.createVariable(name, dtype, dimensions, fill_value=fill_value, **enc)
-
-                    if scale_factor is not None:
-                        new_var.scale_factor = scale_factor
-                    if add_offset is not None:
-                        new_var.add_offset = add_offset
-
-                    # Copy attributes (skip _FillValue as it's already set)
-                    for attr_name in var.ncattrs():
-                        if attr_name not in ['scale_factor', 'add_offset', '_FillValue']:
-                            new_var.setncattr(attr_name, var.getncattr(attr_name))
-
-                    # Copy and transform data
-                    if scale_factor is not None and add_offset is not None:
-                        data = var[:]
-                        if hasattr(data, 'mask'):
-                            valid_data = (data.data - add_offset) / scale_factor
-                            valid_data = np.round(valid_data).astype(dtype)
-                            new_var[:] = np.ma.array(valid_data, mask=data.mask)
-                        else:
-                            valid_data = (data - add_offset) / scale_factor
-                            valid_data = np.round(valid_data).astype(dtype)
-                            new_var[:] = valid_data
-                    else:
-                        new_var[:] = var[:]
-
-        # Get compressed file size and calculate savings
+        
+        # Step 2: Define encoding parameters for each variable type
+        encoding = {
+            # Reflectivity variables: int16 with scale=0.5, offset=-32
+            'corrected_reflectivity': {
+                'dtype': 'int16',
+                'scale_factor': 0.5,
+                'add_offset': -32.0,
+                'zlib': True,
+                'complevel': 4,
+            },
+            'reflectivity': {
+                'dtype': 'int16',
+                'scale_factor': 0.5,
+                'add_offset': -32.0,
+                'zlib': True,
+                'complevel': 4,
+            },
+            'attenuation_corrected_reflectivity': {
+                'dtype': 'int16',
+                'scale_factor': 0.5,
+                'add_offset': -32.0,
+                'zlib': True,
+                'complevel': 4,
+            },
+            'total_power': {
+                'dtype': 'int16',
+                'scale_factor': 0.5,
+                'add_offset': -32.0,
+                'zlib': True,
+                'complevel': 4,
+            },
+            # Temperature: int16 with scale=0.1, offset=-50
+            'temperature': {
+                'dtype': 'int16',
+                'scale_factor': 0.1,
+                'add_offset': -50.0,
+                'zlib': True,
+                'complevel': 4,
+            },
+            # Differential reflectivity: int16 with scale=0.05, offset=-6
+            'differential_reflectivity': {
+                'dtype': 'int16',
+                'scale_factor': 0.05,
+                'add_offset': -6.0,
+                'zlib': True,
+                'complevel': 4,
+            },
+            'corrected_differential_reflectivity': {
+                'dtype': 'int16',
+                'scale_factor': 0.05,
+                'add_offset': -6.0,
+                'zlib': True,
+                'complevel': 4,
+            },
+            # Differential phase and KDP: float32 with compression only
+            'differential_phase': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'corrected_differential_phase': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'corrected_specific_differential_phase': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            # Velocity: float32 with compression only (no re-encoding)
+            'velocity': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'corrected_velocity': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            # Cross correlation ratio: int16 with scale=0.01, offset=0
+            'cross_correlation_ratio': {
+                'dtype': 'int16',
+                'scale_factor': 0.01,
+                'add_offset': 0.0,
+                'zlib': True,
+                'complevel': 4,
+            },
+            # Other variables: float32 with compression only
+            'radar_estimated_rain_rate': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'radar_estimated_snow_rate': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'normalized_intercept_parameter': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'median_volume_diameter': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'signal_to_noise_ratio': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'spectrum_width': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'signal_quality_index': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+            'path_integrated_differential_attenuation': {
+                'dtype': 'float32',
+                'zlib': True,
+                'complevel': 4,
+            },
+        }
+        
+        # Step 3: Read uncompressed file with xarray
+        # Use decode_times=False to preserve original netCDF time encoding and avoid nanosecond conversion
+        ds = xr.open_dataset(temp_filename, engine='netcdf4', decode_times=False)
+        
+        # Step 4: Build encoding dict for variables that exist in the dataset
+        # Only apply encoding to variables that are actually in the file
+        final_encoding = {}
+        for var_name in ds.data_vars:
+            if var_name in encoding:
+                final_encoding[var_name] = encoding[var_name]
+            else:
+                # Default: just add compression for any other variables
+                final_encoding[var_name] = {'zlib': True, 'complevel': 4}
+        
+        # Coordinate variables: use gzip compression only
+        for coord_name in ds.coords:
+            if coord_name not in final_encoding:
+                # For all coordinate variables (including time), just add compression
+                # Time is preserved in its original encoding from PyART via decode_times=False
+                final_encoding[coord_name] = {'zlib': True, 'complevel': 4}
+        
+        # Step 5: Write with encoding - xarray handles scale_factor/add_offset automatically
+        ds.to_netcdf(
+            outfilename,
+            encoding=final_encoding,
+            engine='netcdf4',
+            unlimited_dims=['time'] if 'time' in ds.dims else [],
+        )
+        ds.close()
+        
+        # Step 6: Calculate compression savings
         compressed_size = os.path.getsize(outfilename)
         size_reduction_mb = (uncompressed_size - compressed_size) / (1024 * 1024)
         size_reduction_pct = 100 * (1 - compressed_size / uncompressed_size) if uncompressed_size > 0 else 0
-
+        
         return size_reduction_mb, size_reduction_pct
-
+        
     finally:
         # Clean up temporary file
         if os.path.exists(temp_filename):
