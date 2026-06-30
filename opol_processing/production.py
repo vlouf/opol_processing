@@ -16,9 +16,8 @@ verbose variable names.
 .. autosummary::
     :toctree: generated/
 
-    _mkdir
-    process_and_save
     production_line
+    process_and_save
 """
 # Python Standard Library
 import os
@@ -45,6 +44,7 @@ from . import hydrometeors
 from . import phase
 from . import radar_codes
 from . import temperature
+from . import utils
 
 
 # If the number of coherent velocity gates left after noise censoring is below
@@ -84,240 +84,6 @@ KEEP_FIELDS = {
 }
 
 
-def _meta(data, **kwargs) -> dict:
-    """Build a Py-ART field dictionary."""
-    field = {"data": data}
-    field.update(kwargs)
-    return field
-
-
-def _toc(label: str, t0: float, debug: bool) -> float:
-    """Print the elapsed time for a step (when debug) and return a fresh tic."""
-    now = time.time()
-    if debug:
-        print(f"  [{label:<22}] {now - t0:7.3f} s")
-    return now
-
-
-def _mkdir(path):
-    """Make a directory, tolerating concurrent creation (multiprocessing)."""
-    if os.path.exists(path):
-        return None
-    try:
-        os.makedirs(path)
-    except FileExistsError:
-        pass
-    return None
-
-
-def _write_compressed_cfradial(radar, outfilename):
-    """
-    Write PyART Radar object to CF/Radial netCDF4 with xarray encoding compression.
-    
-    Uses temporary file approach:
-    1. Write with PyART (uncompressed) to temp file
-    2. Read with xarray
-    3. Apply encoding dict (scale_factor/add_offset for int types)
-    4. Write final file with gzip compression
-    
-    Parameters
-    ----------
-    radar : pyart.core.Radar
-        Radar object to write.
-    outfilename : str
-        Output netCDF file path.
-        
-    Returns
-    -------
-    size_saved_mb : float
-        Size reduction in MB
-    size_saved_pct : float
-        Size reduction as percentage
-    """
-    # Create temporary file for uncompressed intermediate
-    with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
-        temp_filename = tmp.name
-    
-    try:
-        # Step 1: Write uncompressed CF/Radial with PyART
-        pyart.io.write_cfradial(temp_filename, radar, format='NETCDF4')
-        uncompressed_size = os.path.getsize(temp_filename)
-        
-        # Step 2: Define encoding parameters for each variable type
-        encoding = {
-            # Reflectivity variables: int16 with scale=0.5, offset=-32
-            'corrected_reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.5,
-                'add_offset': -32.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            'reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.5,
-                'add_offset': -32.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            'attenuation_corrected_reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.5,
-                'add_offset': -32.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            'total_power': {
-                'dtype': 'int16',
-                'scale_factor': 0.5,
-                'add_offset': -32.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Temperature: int16 with scale=0.1, offset=-50
-            'temperature': {
-                'dtype': 'int16',
-                'scale_factor': 0.1,
-                'add_offset': -50.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Differential reflectivity: int16 with scale=0.05, offset=-6
-            'differential_reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.05,
-                'add_offset': -6.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            'corrected_differential_reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.05,
-                'add_offset': -6.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Differential phase and KDP: float32 with compression only
-            'differential_phase': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'corrected_differential_phase': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'corrected_specific_differential_phase': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Velocity: float32 with compression only (no re-encoding)
-            'velocity': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'corrected_velocity': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Cross correlation ratio: int16 with scale=0.01, offset=0
-            'cross_correlation_ratio': {
-                'dtype': 'int16',
-                'scale_factor': 0.01,
-                'add_offset': 0.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Other variables: float32 with compression only
-            'radar_estimated_rain_rate': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'radar_estimated_snow_rate': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'normalized_intercept_parameter': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'median_volume_diameter': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'signal_to_noise_ratio': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'spectrum_width': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'signal_quality_index': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'path_integrated_differential_attenuation': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-        }
-        
-        # Step 3: Read uncompressed file with xarray
-        # Use decode_times=False to preserve original netCDF time encoding and avoid nanosecond conversion
-        ds = xr.open_dataset(temp_filename, engine='netcdf4', decode_times=False)
-        
-        # Step 4: Build encoding dict for variables that exist in the dataset
-        # Only apply encoding to variables that are actually in the file
-        final_encoding = {}
-        for var_name in ds.data_vars:
-            if var_name in encoding:
-                final_encoding[var_name] = encoding[var_name]
-            else:
-                # Default: just add compression for any other variables
-                final_encoding[var_name] = {'zlib': True, 'complevel': 4}
-        
-        # Coordinate variables: use gzip compression only
-        for coord_name in ds.coords:
-            if coord_name not in final_encoding:
-                # For all coordinate variables (including time), just add compression
-                # Time is preserved in its original encoding from PyART via decode_times=False
-                final_encoding[coord_name] = {'zlib': True, 'complevel': 4}
-        
-        # Step 5: Write with encoding - xarray handles scale_factor/add_offset automatically
-        ds.to_netcdf(
-            outfilename,
-            encoding=final_encoding,
-            engine='netcdf4',
-            unlimited_dims=['time'] if 'time' in ds.dims else [],
-        )
-        ds.close()
-        
-        # Step 6: Calculate compression savings
-        compressed_size = os.path.getsize(outfilename)
-        size_reduction_mb = (uncompressed_size - compressed_size) / (1024 * 1024)
-        size_reduction_pct = 100 * (1 - compressed_size / uncompressed_size) if uncompressed_size > 0 else 0
-        
-        return size_reduction_mb, size_reduction_pct
-        
-    finally:
-        # Clean up temporary file
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
-
-
 def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=False):
     """
     Production line for correcting and estimating OPOL radar parameters.
@@ -348,7 +114,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         if debug:
             print(f"  Skipped: only {radar.nsweeps} sweeps (< 10).")
         return None
-    t = _toc("read", t, debug)
+    t = utils.toc("read", t, debug)
 
     # Ensure sweeps are ordered by ascending elevation (the OceanPOL scan
     # strategy changed from bottom-up to top-down; downstream 3D steps assume
@@ -357,7 +123,17 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     radar = radar_codes.sort_azimuths(radar)
     if debug:
         print(f"  sweep elevations: {np.round(np.asarray(radar.fixed_angle['data']), 2)}")
-    t = _toc("order sweeps", t, debug)
+    t = utils.toc("order sweeps", t, debug)
+
+    # Decimate rays from 0.5° to 1° azimuth resolution if needed
+    # (Must be done AFTER sweep ordering, as ordering uses sweep indices)
+    if radar.nrays > 2:
+        az_diff = np.abs(np.diff(radar.azimuth['data'][:2]))
+        if az_diff[0] < 0.75:  # Likely 0.5° resolution
+            radar = utils.decimate_rays_to_1degree(radar)
+            if debug:
+                print(f"  Decimated rays from 0.5° to 1° azimuth resolution")
+            t = utils.toc("decimate rays", t, debug)
 
     # Resolve field names once for the whole volume (raises if a required field
     # is missing).
@@ -386,23 +162,23 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     lat = float(np.asarray(radar.latitude["data"]).ravel()[0])
     lon = float(np.asarray(radar.longitude["data"]).ravel()[0])
     southern_ocean = lat < -40
-    t = _toc("resolve+calib", t, debug)
+    t = utils.toc("resolve+calib", t, debug)
 
     # --- RHOHV noise correction ---
     rho_corr = radar_codes.correct_rhohv(radar, rhohv_name=rho_name, snr_name=snr_name)
     radar.add_field(
         "cross_correlation_ratio",
-        _meta(rho_corr, long_name="Corrected cross correlation ratio", units="1"),
+        utils.meta(rho_corr, long_name="Corrected cross correlation ratio", units="1"),
         replace_existing=True,
     )
-    t = _toc("rhohv", t, debug)
+    t = utils.toc("rhohv", t, debug)
 
     # --- Temperature profile (ERA5 -> bright band -> default) ---
     geo_h, temp_k = temperature.get_volume_temperature_profile(rdate, lat, lon, radar, fields)
     temps = temperature.interp_temperature(geo_h, temp_k, radar.gate_altitude["data"])
     radar.add_field(
         "temperature",
-        _meta(
+        utils.meta(
             temps.astype(np.float32),
             long_name="Temperature at gate",
             units="degrees Celsius",
@@ -410,7 +186,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         ),
         replace_existing=True,
     )
-    t = _toc("temperature", t, debug)
+    t = utils.toc("temperature", t, debug)
 
     # --- Reflectivity cleaning (hydrometeor gate filter) ---
     gf = filtering.do_gatefilter_opol(
@@ -424,7 +200,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     dbz_clean = np.ma.masked_invalid(dbz_clean)
     radar.add_field(
         "corrected_reflectivity",
-        _meta(
+        utils.meta(
             dbz_clean,
             long_name="Corrected reflectivity",
             units="dBZ",
@@ -433,7 +209,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         ),
         replace_existing=True,
     )
-    t = _toc("refl cleaning", t, debug)
+    t = utils.toc("refl cleaning", t, debug)
 
     # --- PHIDP / KDP (precip-gated PHIDO) ---
     precip_gf = filtering.do_precip_gatefilter(
@@ -443,15 +219,15 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     phidp_corr, kdp = phase.get_phidp(radar, phidp_name, precip_gf, refl_for_phi, temps)
     radar.add_field(
         "corrected_differential_phase",
-        _meta(phidp_corr.astype(np.float32), long_name="Corrected differential phase (PHIDO)", units="degree"),
+        utils.meta(phidp_corr.astype(np.float32), long_name="Corrected differential phase (PHIDO)", units="degree"),
         replace_existing=True,
     )
     radar.add_field(
         "corrected_specific_differential_phase",
-        _meta(kdp.astype(np.float32), long_name="Corrected specific differential phase (PHIDO)", units="degree/km"),
+        utils.meta(kdp.astype(np.float32), long_name="Corrected specific differential phase (PHIDO)", units="degree/km"),
         replace_existing=True,
     )
-    t = _toc("phidp/kdp (phido)", t, debug)
+    t = utils.toc("phidp/kdp (phido)", t, debug)
 
     # --- Velocity dealiasing (coherence censoring + UNRAVEL) ---
     if do_dealiasing and vel_name in radar.fields:
@@ -466,24 +242,24 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
             vel_meta["units"] = "m s-1"
             vel_meta["comment"] = f"UNRAVEL skipped ({n_coherent} coherent gates)."
         else:
-            radar.add_field("VEL_CENSORED", _meta(censored, units="m s-1"), replace_existing=True)
+            radar.add_field("VEL_CENSORED", utils.meta(censored, units="m s-1"), replace_existing=True)
             vel_meta = radar_codes.unravel(radar, vgf, vel_name="VEL_CENSORED", dbz_name="corrected_reflectivity")
             radar.fields.pop("VEL_CENSORED", None)
 
         radar.add_field("corrected_velocity", vel_meta, replace_existing=True)
-    t = _toc("dealiasing (unravel)", t, debug)
+    t = utils.toc("dealiasing (unravel)", t, debug)
 
     # --- ZH attenuation (Z-PHI) ---
     pia = attenuation.correct_attenuation(r, dbz_clean, phidp_corr, temps)
     radar.add_field(
         "path_integrated_attenuation",
-        _meta(pia.astype(np.float32), long_name="Path integrated attenuation", units="dB"),
+        utils.meta(pia.astype(np.float32), long_name="Path integrated attenuation", units="dB"),
         replace_existing=True,
     )
     dbz_atten = np.ma.masked_invalid((dbz_clean + pia).astype(np.float32))
     radar.add_field(
         "attenuation_corrected_reflectivity",
-        _meta(
+        utils.meta(
             dbz_atten,
             long_name="Attenuation corrected reflectivity",
             units="dBZ",
@@ -491,7 +267,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         ),
         replace_existing=True,
     )
-    t = _toc("attenuation (zh)", t, debug)
+    t = utils.toc("attenuation (zh)", t, debug)
 
     # --- ZDR noise + differential attenuation correction ---
     radar.fields[zdr_name]["data"] = radar.fields[zdr_name]["data"] + zdr_offset
@@ -499,12 +275,12 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     corr_zdr = np.ma.masked_where(np.ma.getmaskarray(dbz_clean), corr_zdr)
     radar.add_field(
         "corrected_differential_reflectivity",
-        _meta(corr_zdr.astype(np.float32), long_name="Corrected differential reflectivity", units="dB"),
+        utils.meta(corr_zdr.astype(np.float32), long_name="Corrected differential reflectivity", units="dB"),
         replace_existing=True,
     )
     zdr_atten = attenuation.correct_attenuation_zdr(radar, gf, phidp_name="corrected_differential_phase")
     radar.add_field("path_integrated_differential_attenuation", zdr_atten, replace_existing=True)
-    t = _toc("zdr (+ diff atten)", t, debug)
+    t = utils.toc("zdr (+ diff atten)", t, debug)
 
     # --- Retrieval products ---
     if use_csu:
@@ -517,7 +293,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         hid = hydrometeors.compute_hid(dbz_arr, zdr_arr, kdp_arr, rho_arr, t_arr)
         radar.add_field(
             "radar_echo_classification",
-            _meta(
+            utils.meta(
                 np.ma.masked_equal(hid.astype(np.int16), 0),
                 long_name="Hydrometeor classification",
                 units="1",
@@ -529,7 +305,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         rain = hydrometeors.get_rainfall_estimate(dbz_arr, zdr_arr, kdp_arr, t_arr, southern_ocean)
         radar.add_field(
             "radar_estimated_rain_rate",
-            _meta(
+            utils.meta(
                 rain.astype(np.float32),
                 long_name="Rainfall rate",
                 units="mm h-1",
@@ -542,22 +318,22 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         nw, d0 = hydrometeors.get_dsd_estimate(dbz_arr, zdr_arr, t_arr)
         radar.add_field(
             "normalized_intercept_parameter",
-            _meta(nw.astype(np.float32), long_name="Normalized intercept parameter (log10 Nw)", units="log10(mm-1 m-3)"),
+            utils.meta(nw.astype(np.float32), long_name="Normalized intercept parameter (log10 Nw)", units="log10(mm-1 m-3)"),
             replace_existing=True,
         )
         radar.add_field(
             "median_volume_diameter",
-            _meta(d0.astype(np.float32), long_name="Median volume diameter D0", units="mm"),
+            utils.meta(d0.astype(np.float32), long_name="Median volume diameter D0", units="mm"),
             replace_existing=True,
         )
 
         snow = hydrometeors.get_snowfall_estimate(dbz_arr, kdp_arr, t_arr)
         radar.add_field(
             "radar_estimated_snow_rate",
-            _meta(snow.astype(np.float32), long_name="Snowfall rate", units="mm h-1"),
+            utils.meta(snow.astype(np.float32), long_name="Snowfall rate", units="mm h-1"),
             replace_existing=True,
         )
-        t = _toc("products (hid/rain/dsd)", t, debug)
+        t = utils.toc("products (hid/rain/dsd)", t, debug)
 
     # --- Rename surviving raw ODIM fields to CF/Radial verbose names ---
     rename = {
@@ -584,7 +360,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     radar_codes.correct_standard_name(radar)
     radar_codes.coverage_content_type(radar)
     radar_codes.fill_missing(radar)
-    t = _toc("finalise", t, debug)
+    t = utils.toc("finalise", t, debug)
 
     if debug:
         print(f"  [{'TOTAL production_line':<22}] {time.time() - st:7.3f} s")
@@ -615,7 +391,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True,
 
     datestr = re.findall("[0-9]{8}", os.path.basename(radar_file_name))[0]
     outpath_ppi = os.path.join(outpath, "ppi", datestr)
-    _mkdir(outpath_ppi)
+    utils.mkdir(outpath_ppi)
 
     base = os.path.basename(radar_file_name)
     outfilename = re.sub(r"\.(hdf|h5|nc)$", "", base) + ".cfradial.nc"
@@ -687,7 +463,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True,
     radar.metadata = metadata
 
     tw = time.time()
-    size_saved_mb, size_saved_pct = _write_compressed_cfradial(radar, outfilename)
+    size_saved_mb, size_saved_pct = utils.write_compressed_cfradial(radar, outfilename)
     if debug:
         elapsed = time.time() - tw
         print(f"  [{'write_cfradial':<22}] {elapsed:7.3f} s")
