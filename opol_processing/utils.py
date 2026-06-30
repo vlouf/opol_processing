@@ -10,6 +10,7 @@ Utility functions for OPOL processing pipeline.
 
 import os
 import time
+import tempfile
 import numpy as np
 import pyart
 
@@ -31,97 +32,53 @@ def toc(label: str, t0: float, debug: bool) -> float:
     return now
 
 
-def determine_optimal_packing(data_min, data_max, has_sign=True, has_fill=False, bits=16):
+def determine_optimal_packing(data_min, data_max, bits=16):
     """
     Determine optimal scale_factor and add_offset for packing float data into integers.
-    
-    Calculates the best linear scaling to pack float data into integers while
-    maximizing precision. Adapted from Bureau of Meteorology approach.
-    
+
+    Uses the full signed integer range with one slot reserved for the fill
+    sentinel, matching Rainbow 8-bit encoding (254 usable levels for int8
+    gives 0.5 dBZ step for reflectivity).
+
     Parameters
     ----------
     data_min : float
-        Minimum physical value to represent
+        Minimum physical value to represent.
     data_max : float
-        Maximum physical value to represent
-    has_sign : bool
-        Whether the data is signed (True for int16, False for uint16)
-    has_fill : bool
-        Whether to reserve one integer value for fill/invalid data
+        Maximum physical value to represent.
     bits : int
-        Number of bits for integer storage (8, 16, 32, etc.)
-        
+        Integer storage width (8 → int8, 16 → int16).
+
     Returns
     -------
     scale_factor : float
-        Scaling factor to convert between integer and float
     add_offset : float
-        Offset to convert between integer and float
-        
+
     Notes
     -----
-    With CF/NetCDF encoding, the physical value is recovered as:
-        physical_value = integer_value * scale_factor + add_offset
+    CF/NetCDF decoding: ``physical = integer * scale_factor + add_offset``.
+    Valid data integers span ``-(2^(bits-1)-1)`` to ``+(2^(bits-1)-1)``;
+    the most-negative integer (e.g. -128 for int8) is the fill sentinel.
     """
-    # Use full signed integer range:
-    #   with fill:    data integers -(2^(bits-1)-1) to +(2^(bits-1)-1)  [2^bits - 2 levels]
-    #                 fill integer  = -(2^(bits-1))  [most negative, e.g. -128 for int8]
-    #   without fill: data integers -(2^(bits-1)-1) to +(2^(bits-1)-1)  [2^bits - 2 levels]
-    #                 still reserve most-negative integer as fill sentinel
-    # This gives 254 usable levels for int8 (matches Rainbow 8-bit approach, 0.5 dBZ step)
     scale_factor = (data_max - data_min) / (2 ** bits - 2)
     add_offset = (data_min + data_max) / 2
-
     return float(scale_factor), float(add_offset)
 
 
-def pack_data_into_int16(data, scale_factor, add_offset, fill_value=None):
-    """
-    Pack float data into int16 using scale_factor and add_offset.
-    
-    Parameters
-    ----------
-    data : np.ndarray or np.ma.MaskedArray
-        Float data to pack
-    scale_factor : float
-        Scaling factor from determine_optimal_packing()
-    add_offset : float
-        Offset from determine_optimal_packing()
-    fill_value : float, optional
-        Physical value representing missing/invalid data
-        
-    Returns
-    -------
-    packed : np.ndarray of int16
-        Packed integer data
-    """
-    data_copy = np.copy(data)
-    
-    if fill_value is not None:
-        fill_mask = data_copy == fill_value
-    else:
-        fill_mask = None
-    
-    # Pack: (physical - offset) / scale
-    packed = np.round((data_copy - add_offset) / scale_factor).astype(np.int16)
-    
-    # Mark fill values as minimum representable int16 if needed
-    if fill_mask is not None:
-        packed[fill_mask] = np.iinfo(np.int16).min
-    
-    return packed
 
 
-def decimate_rays_to_1degree(radar):
+def decimate_rays_to_1degree(radar, debug=False):
     """
     Decimate radar rays from 0.5° to 1° azimuth resolution.
     Groups consecutive ray pairs and averages their data using masked array operations.
-    
+
     Parameters
     ----------
     radar : pyart.core.Radar
         Input radar with 0.5° azimuth resolution.
-        
+    debug : bool
+        Print before/after dimension check.
+
     Returns
     -------
     radar : pyart.core.Radar
@@ -129,12 +86,12 @@ def decimate_rays_to_1degree(radar):
     """
     n_rays = radar.nrays
     n_pairs = (n_rays + 1) // 2  # Number of ray pairs
-    
-    # ===== BEFORE DECIMATION CHECK =====
-    sample_field = list(radar.fields.keys())[0]
-    sample_shape_before = radar.fields[sample_field]['data'].shape
-    print(f"  [decimate check] Before: nrays={n_rays}, sample field '{sample_field}' shape={sample_shape_before}")
-    print(f"  [decimate check] Expected after: nrays={n_pairs}, expected shape=({n_pairs}, {sample_shape_before[1]})")
+
+    if debug:
+        sample_field = list(radar.fields.keys())[0]
+        sample_shape_before = radar.fields[sample_field]['data'].shape
+        print(f"  [decimate check] Before: nrays={n_rays}, sample field '{sample_field}' shape={sample_shape_before}")
+        print(f"  [decimate check] Expected after: nrays={n_pairs}, expected shape=({n_pairs}, {sample_shape_before[1]})")
     
     # Aggregate field data by averaging ray pairs
     # Use list(radar.fields.keys()) to avoid dict iteration issues
@@ -174,12 +131,13 @@ def decimate_rays_to_1degree(radar):
     # PyART stores nrays as simple attribute set from len(time['data']) during __init__
     # We must update it explicitly after decimation
     radar.nrays = len(radar.time['data'])
-    
-    # ===== AFTER DECIMATION CHECK =====
-    sample_shape_after = radar.fields[sample_field]['data'].shape
-    print(f"  [decimate check] After: nrays={radar.nrays}, sample field '{sample_field}' shape={sample_shape_after}")
-    print(f"  [decimate check] Dimension match: rows={sample_shape_after[0] == radar.nrays}, cols={sample_shape_after[1] == sample_shape_before[1]}")
-    
+
+    if debug:
+        sample_field = list(radar.fields.keys())[0]
+        sample_shape_after = radar.fields[sample_field]['data'].shape
+        print(f"  [decimate check] After: nrays={radar.nrays}, sample field '{sample_field}' shape={sample_shape_after}")
+        print(f"  [decimate check] Dimension match: rows={sample_shape_after[0] == radar.nrays}, cols={sample_shape_after[1] == sample_shape_before[1]}")
+
     return radar
 
 
@@ -207,15 +165,7 @@ def write_compressed_cfradial(radar, outfilename):
     outfilename : str
         Output netCDF file path.
         
-    Returns
-    -------
-    size_saved_mb : float
-        Size reduction in MB (compared to uncompressed)
-    size_saved_pct : float
-        Size reduction as percentage
     """
-    import tempfile
-    
     # Step 1: Filter fields if KEEP_FIELDS is specified
     if KEEP_FIELDS is not None:
         fields_to_remove = [f for f in radar.fields.keys() if f not in KEEP_FIELDS]
@@ -252,9 +202,7 @@ def write_compressed_cfradial(radar, outfilename):
         data_to_pack[np.isinf(data_to_pack)] = data_min
         
         # Calculate optimal packing parameters
-        scale_factor, add_offset = determine_optimal_packing(
-            data_min, data_max, has_sign=True, has_fill=has_fill, bits=bits
-        )
+        scale_factor, add_offset = determine_optimal_packing(data_min, data_max, bits=bits)
         
         # Fill integer = the packed integer that represents data_min.
         # Masked / invalid data has already been set to data_min above, so they
@@ -283,35 +231,6 @@ def write_compressed_cfradial(radar, outfilename):
         radar.fields[field_name]['add_offset'] = add_offset
         radar.fields[field_name]['_FillValue'] = fill_int
         radar.fields[field_name]['_Write_as_dtype'] = write_dtype
-    
-    # Step 3: Measure uncompressed size for reporting
-    # Create a temp file first to measure uncompressed size
-    with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
-        temp_uncompressed = tmp.name
-    
-    try:
-        # Write uncompressed version to temp file to measure size
-        # Note: Even with format='NETCDF4', PyART may apply some compression
-        # but this gives us a baseline for comparison
-        pyart.io.write_cfradial(temp_uncompressed, radar, format='NETCDF4')
-        uncompressed_size = os.path.getsize(temp_uncompressed)
-        os.remove(temp_uncompressed)
-        
-        # Write final compressed version
-        pyart.io.write_cfradial(outfilename, radar, format='NETCDF4')
-        compressed_size = os.path.getsize(outfilename)
-        
-        # Calculate compression savings
-        size_reduction_mb = (uncompressed_size - compressed_size) / (1024 * 1024)
-        size_reduction_pct = 100 * (1 - compressed_size / uncompressed_size) if uncompressed_size > 0 else 0
-        
-        return size_reduction_mb, size_reduction_pct
-        
-    except Exception as e:
-        # Clean up temp file on error
-        if os.path.exists(temp_uncompressed):
-            try:
-                os.remove(temp_uncompressed)
-            except:
-                pass
-        raise e
+
+    # Step 3: Write
+    pyart.io.write_cfradial(outfilename, radar, format='NETCDF4')

@@ -31,8 +31,6 @@ import pyart
 import cftime
 import numpy as np
 import pandas as pd
-import xarray as xr
-from netCDF4 import Dataset
 
 # Custom modules.
 from . import attenuation
@@ -128,7 +126,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     if radar.nrays > 2:
         az_diff = np.abs(np.diff(radar.azimuth['data'][:2]))
         if az_diff[0] < 0.75:  # Likely 0.5° resolution
-            radar = utils.decimate_rays_to_1degree(radar)
+            radar = utils.decimate_rays_to_1degree(radar, debug=debug)
             if debug:
                 print(f"  Decimated rays from 0.5° to 1° azimuth resolution")
             t = utils.toc("decimate rays", t, debug)
@@ -188,7 +186,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
 
     # --- Reflectivity cleaning (hydrometeor gate filter) ---
     gf = filtering.do_gatefilter_opol(
-        radar, refl_name=th_name, rhohv_name="cross_correlation_ratio", phidp_name=phidp_name
+        radar, refl_name=th_name, rhohv_name="cross_correlation_ratio", phidp_name=phidp_name, zdr_name=zdr_name
     )
     th = radar.fields[th_name]["data"]
     # Numba speckle filter on the masked total power (replaces pyart despeckle).
@@ -454,7 +452,7 @@ def process_and_save(radar_file_name, output_filename, do_dealiasing=True, use_c
     radar.metadata = metadata
 
     tw = time.time()
-    size_saved_mb, size_saved_pct = utils.write_compressed_cfradial(radar, output_filename)
+    utils.write_compressed_cfradial(radar, output_filename)
     if debug:
         elapsed = time.time() - tw
         print(f"  [{'write_cfradial':<22}] {elapsed:7.3f} s")
