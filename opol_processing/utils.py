@@ -63,21 +63,15 @@ def determine_optimal_packing(data_min, data_max, has_sign=True, has_fill=False,
     With CF/NetCDF encoding, the physical value is recovered as:
         physical_value = integer_value * scale_factor + add_offset
     """
-    if has_fill:
-        # Reserve one integer value for fill/invalid data
-        scale_factor = (data_max - data_min) / ((2 ** (bits - 1)) - 2)
-        if has_sign:
-            add_offset = (data_min + data_max) / 2
-        else:
-            add_offset = data_min - scale_factor
-    else:
-        # No fill value reserved
-        scale_factor = (data_max - data_min) / ((2 ** (bits - 1)) - 1)
-        if has_sign:
-            add_offset = data_min + (2 ** (bits - 2)) * scale_factor
-        else:
-            add_offset = data_min
-    
+    # Use full signed integer range:
+    #   with fill:    data integers -(2^(bits-1)-1) to +(2^(bits-1)-1)  [2^bits - 2 levels]
+    #                 fill integer  = -(2^(bits-1))  [most negative, e.g. -128 for int8]
+    #   without fill: data integers -(2^(bits-1)-1) to +(2^(bits-1)-1)  [2^bits - 2 levels]
+    #                 still reserve most-negative integer as fill sentinel
+    # This gives 254 usable levels for int8 (matches Rainbow 8-bit approach, 0.5 dBZ step)
+    scale_factor = (data_max - data_min) / (2 ** bits - 2)
+    add_offset = (data_min + data_max) / 2
+
     return float(scale_factor), float(add_offset)
 
 
@@ -262,29 +256,33 @@ def write_compressed_cfradial(radar, outfilename):
             data_min, data_max, has_sign=True, has_fill=has_fill, bits=bits
         )
         
-        # Calculate the packed fill value (integer that represents data_min)
-        packed_fill = (data_min - add_offset) / scale_factor
-        
-        # Determine target dtype and set fill value with correct type
+        # Fill integer = the packed integer that represents data_min.
+        # Masked / invalid data has already been set to data_min above, so they
+        # share the same integer sentinel.  _Write_as_dtype tells PyART to
+        # quantize the float array on write — no manual cast needed (avoids
+        # int8 overflow / saturation when values round to ±128).
+        packed_fill = int(round((data_min - add_offset) / scale_factor))
         if bits == 16:
-            target_dtype = 'int16'
-            fill_value = np.int16(packed_fill)
+            write_dtype = 'i2'
+            fill_int = np.int16(packed_fill)
         elif bits == 8:
-            target_dtype = 'int8'
-            fill_value = np.int8(packed_fill)
+            write_dtype = 'i1'
+            fill_int = np.int8(packed_fill)
         else:
-            target_dtype = None
-            fill_value = None
-        
-        # Set encoding metadata on the field
-        # Only set scale_factor and add_offset - PyART handles the rest
+            continue
+
+        # Replace masked values in the float array with data_min so they map
+        # to the same packed integer as the fill sentinel.
+        if isinstance(field_data, np.ma.MaskedArray):
+            mask = np.ma.getmaskarray(field_data)
+            data_to_pack[mask] = data_min
+
+        # Keep data as float; PyART applies scale/offset and writes as write_dtype
         radar.fields[field_name]['data'] = data_to_pack
         radar.fields[field_name]['scale_factor'] = scale_factor
         radar.fields[field_name]['add_offset'] = add_offset
-        
-        # Set fill value with proper numpy dtype so netCDF4 accepts it
-        if fill_value is not None:
-            radar.fields[field_name]['_FillValue'] = fill_value
+        radar.fields[field_name]['_FillValue'] = fill_int
+        radar.fields[field_name]['_Write_as_dtype'] = write_dtype
     
     # Step 3: Measure uncompressed size for reporting
     # Create a temp file first to measure uncompressed size
