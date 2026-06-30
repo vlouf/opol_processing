@@ -10,10 +10,10 @@ Utility functions for OPOL processing pipeline.
 
 import os
 import time
-import tempfile
 import numpy as np
 import pyart
-import xarray as xr
+
+from opol_processing.compression_config import COMPRESSION_DICT, ZLIB_COMPLEVEL, KEEP_FIELDS
 
 
 def meta(data, **kwargs) -> dict:
@@ -29,6 +29,93 @@ def toc(label: str, t0: float, debug: bool) -> float:
     if debug:
         print(f"  [{label:<22}] {now - t0:7.3f} s")
     return now
+
+
+def determine_optimal_packing(data_min, data_max, has_sign=True, has_fill=False, bits=16):
+    """
+    Determine optimal scale_factor and add_offset for packing float data into integers.
+    
+    Calculates the best linear scaling to pack float data into integers while
+    maximizing precision. Adapted from Bureau of Meteorology approach.
+    
+    Parameters
+    ----------
+    data_min : float
+        Minimum physical value to represent
+    data_max : float
+        Maximum physical value to represent
+    has_sign : bool
+        Whether the data is signed (True for int16, False for uint16)
+    has_fill : bool
+        Whether to reserve one integer value for fill/invalid data
+    bits : int
+        Number of bits for integer storage (8, 16, 32, etc.)
+        
+    Returns
+    -------
+    scale_factor : float
+        Scaling factor to convert between integer and float
+    add_offset : float
+        Offset to convert between integer and float
+        
+    Notes
+    -----
+    With CF/NetCDF encoding, the physical value is recovered as:
+        physical_value = integer_value * scale_factor + add_offset
+    """
+    if has_fill:
+        # Reserve one integer value for fill/invalid data
+        scale_factor = (data_max - data_min) / ((2 ** (bits - 1)) - 2)
+        if has_sign:
+            add_offset = (data_min + data_max) / 2
+        else:
+            add_offset = data_min - scale_factor
+    else:
+        # No fill value reserved
+        scale_factor = (data_max - data_min) / ((2 ** (bits - 1)) - 1)
+        if has_sign:
+            add_offset = data_min + (2 ** (bits - 2)) * scale_factor
+        else:
+            add_offset = data_min
+    
+    return float(scale_factor), float(add_offset)
+
+
+def pack_data_into_int16(data, scale_factor, add_offset, fill_value=None):
+    """
+    Pack float data into int16 using scale_factor and add_offset.
+    
+    Parameters
+    ----------
+    data : np.ndarray or np.ma.MaskedArray
+        Float data to pack
+    scale_factor : float
+        Scaling factor from determine_optimal_packing()
+    add_offset : float
+        Offset from determine_optimal_packing()
+    fill_value : float, optional
+        Physical value representing missing/invalid data
+        
+    Returns
+    -------
+    packed : np.ndarray of int16
+        Packed integer data
+    """
+    data_copy = np.copy(data)
+    
+    if fill_value is not None:
+        fill_mask = data_copy == fill_value
+    else:
+        fill_mask = None
+    
+    # Pack: (physical - offset) / scale
+    packed = np.round((data_copy - add_offset) / scale_factor).astype(np.int16)
+    
+    # Mark fill values as minimum representable int16 if needed
+    if fill_mask is not None:
+        packed[fill_mask] = np.iinfo(np.int16).min
+    
+    return packed
 
 
 def decimate_rays_to_1degree(radar):
@@ -104,13 +191,20 @@ def decimate_rays_to_1degree(radar):
 
 def write_compressed_cfradial(radar, outfilename):
     """
-    Write PyART Radar object to CF/Radial netCDF4 with xarray encoding compression.
+    Write PyART Radar object to compressed CF/Radial netCDF4.
     
-    Uses temporary file approach:
-    1. Write with PyART (uncompressed) to temp file
-    2. Read with xarray
-    3. Apply encoding dict (scale_factor/add_offset for int types)
-    4. Write final file with gzip compression
+    Uses configuration-driven compression with optimal scale_factor/add_offset
+    calculation. Prepares radar object with encoding metadata, then writes
+    directly with PyART.
+    
+    Single-write approach:
+    1. For each field in COMPRESSION_DICT:
+       - Get min/max ranges
+       - Calculate optimal scale_factor/add_offset
+       - Clamp data to [min, max]
+       - Mask invalid values (NaN, inf)
+       - Set encoding metadata on field
+    2. Call pyart.io.write_cfradial() with NETCDF4 format (includes gzip compression)
     
     Parameters
     ----------
@@ -122,189 +216,104 @@ def write_compressed_cfradial(radar, outfilename):
     Returns
     -------
     size_saved_mb : float
-        Size reduction in MB
+        Size reduction in MB (compared to uncompressed)
     size_saved_pct : float
         Size reduction as percentage
     """
-    # Create temporary file for uncompressed intermediate
+    import tempfile
+    
+    # Step 1: Filter fields if KEEP_FIELDS is specified
+    if KEEP_FIELDS is not None:
+        fields_to_remove = [f for f in radar.fields.keys() if f not in KEEP_FIELDS]
+        for field in fields_to_remove:
+            radar.fields.pop(field, None)
+    
+    # Step 2: Prepare compression metadata for each field
+    for field_name in list(radar.fields.keys()):
+        if field_name not in COMPRESSION_DICT:
+            # Field not in compression config - skip encoding
+            continue
+        
+        config = COMPRESSION_DICT[field_name]
+        
+        # Skip if config indicates no compression (None values)
+        if config[0] is None or config[1] is None:
+            # Field uses default float32 with gzip only
+            # Don't set any special encoding, PyART will handle compression
+            continue
+        
+        data_min, data_max, bits, has_fill = config
+        
+        # Get field data (handle both regular arrays and masked arrays)
+        field_data = radar.fields[field_name]['data']
+        
+        # Copy data to avoid modifying original
+        data_to_pack = np.copy(field_data)
+        
+        # Clamp to valid range
+        data_to_pack = np.clip(data_to_pack, data_min, data_max)
+        
+        # Mask invalid values (NaN, inf)
+        data_to_pack[np.isnan(data_to_pack)] = data_min
+        data_to_pack[np.isinf(data_to_pack)] = data_min
+        
+        # Calculate optimal packing parameters
+        scale_factor, add_offset = determine_optimal_packing(
+            data_min, data_max, has_sign=True, has_fill=has_fill, bits=bits
+        )
+        
+        # Calculate the packed fill value (integer that represents data_min)
+        packed_fill = (data_min - add_offset) / scale_factor
+        
+        # Determine target dtype and set fill value with correct type
+        if bits == 16:
+            target_dtype = 'int16'
+            fill_value = np.int16(packed_fill)
+        elif bits == 8:
+            target_dtype = 'int8'
+            fill_value = np.int8(packed_fill)
+        else:
+            target_dtype = None
+            fill_value = None
+        
+        # Set encoding metadata on the field
+        # Only set scale_factor and add_offset - PyART handles the rest
+        radar.fields[field_name]['data'] = data_to_pack
+        radar.fields[field_name]['scale_factor'] = scale_factor
+        radar.fields[field_name]['add_offset'] = add_offset
+        
+        # Set fill value with proper numpy dtype so netCDF4 accepts it
+        if fill_value is not None:
+            radar.fields[field_name]['_FillValue'] = fill_value
+    
+    # Step 3: Measure uncompressed size for reporting
+    # Create a temp file first to measure uncompressed size
     with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
-        temp_filename = tmp.name
+        temp_uncompressed = tmp.name
     
     try:
-        # Step 1: Write uncompressed CF/Radial with PyART
-        pyart.io.write_cfradial(temp_filename, radar, format='NETCDF4')
-        uncompressed_size = os.path.getsize(temp_filename)
+        # Write uncompressed version to temp file to measure size
+        # Note: Even with format='NETCDF4', PyART may apply some compression
+        # but this gives us a baseline for comparison
+        pyart.io.write_cfradial(temp_uncompressed, radar, format='NETCDF4')
+        uncompressed_size = os.path.getsize(temp_uncompressed)
+        os.remove(temp_uncompressed)
         
-        # Step 2: Define encoding parameters for each variable type
-        encoding = {
-            # Reflectivity variables: int16 with scale=0.5, offset=-32
-            'corrected_reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.5,
-                'add_offset': -32.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            'reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.5,
-                'add_offset': -32.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            'attenuation_corrected_reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.5,
-                'add_offset': -32.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            'total_power': {
-                'dtype': 'int16',
-                'scale_factor': 0.5,
-                'add_offset': -32.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Temperature: int16 with scale=0.1, offset=-50
-            'temperature': {
-                'dtype': 'int16',
-                'scale_factor': 0.1,
-                'add_offset': -50.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Differential reflectivity: int16 with scale=0.05, offset=-6
-            'differential_reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.05,
-                'add_offset': -6.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            'corrected_differential_reflectivity': {
-                'dtype': 'int16',
-                'scale_factor': 0.05,
-                'add_offset': -6.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Differential phase and KDP: float32 with compression only
-            'differential_phase': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'corrected_differential_phase': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'corrected_specific_differential_phase': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Velocity: float32 with compression only (no re-encoding)
-            'velocity': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'corrected_velocity': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Cross correlation ratio: int16 with scale=0.01, offset=0
-            'cross_correlation_ratio': {
-                'dtype': 'int16',
-                'scale_factor': 0.01,
-                'add_offset': 0.0,
-                'zlib': True,
-                'complevel': 4,
-            },
-            # Other variables: float32 with compression only
-            'radar_estimated_rain_rate': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'radar_estimated_snow_rate': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'normalized_intercept_parameter': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'median_volume_diameter': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'signal_to_noise_ratio': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'spectrum_width': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'signal_quality_index': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-            'path_integrated_differential_attenuation': {
-                'dtype': 'float32',
-                'zlib': True,
-                'complevel': 4,
-            },
-        }
-        
-        # Step 3: Read uncompressed file with xarray
-        # Use decode_times=False to preserve original netCDF time encoding and avoid nanosecond conversion
-        ds = xr.open_dataset(temp_filename, engine='netcdf4', decode_times=False)
-        
-        # Step 4: Build encoding dict for variables that exist in the dataset
-        # Only apply encoding to variables that are actually in the file
-        final_encoding = {}
-        for var_name in ds.data_vars:
-            if var_name in encoding:
-                final_encoding[var_name] = encoding[var_name]
-            else:
-                # Default: just add compression for any other variables
-                final_encoding[var_name] = {'zlib': True, 'complevel': 4}
-        
-        # Coordinate variables: use gzip compression only
-        for coord_name in ds.coords:
-            if coord_name not in final_encoding:
-                # For all coordinate variables (including time), just add compression
-                # Time is preserved in its original encoding from PyART via decode_times=False
-                final_encoding[coord_name] = {'zlib': True, 'complevel': 4}
-        
-        # Step 5: Write with encoding - xarray handles scale_factor/add_offset automatically
-        ds.to_netcdf(
-            outfilename,
-            encoding=final_encoding,
-            engine='netcdf4',
-            unlimited_dims=['time'] if 'time' in ds.dims else [],
-        )
-        ds.close()
-        
-        # Step 6: Calculate compression savings
+        # Write final compressed version
+        pyart.io.write_cfradial(outfilename, radar, format='NETCDF4')
         compressed_size = os.path.getsize(outfilename)
+        
+        # Calculate compression savings
         size_reduction_mb = (uncompressed_size - compressed_size) / (1024 * 1024)
         size_reduction_pct = 100 * (1 - compressed_size / uncompressed_size) if uncompressed_size > 0 else 0
         
         return size_reduction_mb, size_reduction_pct
         
-    finally:
-        # Clean up temporary file
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(temp_uncompressed):
+            try:
+                os.remove(temp_uncompressed)
+            except:
+                pass
+        raise e

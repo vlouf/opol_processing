@@ -458,7 +458,6 @@ def process_and_save(radar_file_name, output_filename, do_dealiasing=True, use_c
     if debug:
         elapsed = time.time() - tw
         print(f"  [{'write_cfradial':<22}] {elapsed:7.3f} s")
-        print(f"  [{'compression savings':<22}] {size_saved_mb:7.1f} MB ({size_saved_pct:5.1f}%)")
 
     if do_return:
         return radar
