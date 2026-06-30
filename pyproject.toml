@@ -38,7 +38,7 @@ dependencies = [
     "netCDF4",
     "csu_radartools",
     "unravel",
-    "phido @ git+https://github.com/jordanbrook/phido.git",
+    # "phido @ git+https://github.com/jordanbrook/phido.git",
     "dask",
 ]
 
@@ -47,10 +47,6 @@ Homepage = "https://github.com/vlouf/opol_processing"
 
 [project.scripts]
 opol_process = "opol_processing.cli:main"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["opol_processing*"]
 
 [tool.setuptools]
 packages = ["opol_processing"]
