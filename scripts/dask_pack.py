@@ -201,7 +201,7 @@ class VoyageProcessor:
         all_files = sorted(glob.glob(str(self.input_dir / "*.hdf")))
         if not all_files:
             # Try recursive search
-            all_files = sorted(glob.glob(str(self.input_dir / "**/*.hdf")))
+            all_files = sorted(glob.glob(str(self.input_dir / "**/*.hdf"), recursive=True))
 
         # Filter to only files not yet completed
         work_queue = []
@@ -341,7 +341,7 @@ def process_buffer(input_file: str, processor: VoyageProcessor) -> Tuple[str, st
             return (input_file, output_file, "skipped", None)
 
         # Process file
-        opol_processing.process_and_save(
+        result = opol_processing.process_and_save(
             input_file,
             output_filename=output_file,
             do_dealiasing=processor.do_dealiasing,
@@ -349,6 +349,11 @@ def process_buffer(input_file: str, processor: VoyageProcessor) -> Tuple[str, st
             debug=processor.debug,
             exist_ok=True
         )
+
+        # process_and_save returns None for unsuitable scans (e.g. < 10 sweeps)
+        # without raising — treat as skipped, not success.
+        if result is None:
+            return (input_file, "", "skipped", "scan skipped by production_line (e.g. too few sweeps)")
 
         # Return success (tracking updated serially in main thread)
         return (input_file, output_file, "success", None)
