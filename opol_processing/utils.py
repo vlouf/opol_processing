@@ -31,17 +31,6 @@ def toc(label: str, t0: float, debug: bool) -> float:
     return now
 
 
-def mkdir(path):
-    """Make a directory, tolerating concurrent creation (multiprocessing)."""
-    if os.path.exists(path):
-        return None
-    try:
-        os.makedirs(path)
-    except FileExistsError:
-        pass
-    return None
-
-
 def decimate_rays_to_1degree(radar):
     """
     Decimate radar rays from 0.5° to 1° azimuth resolution.

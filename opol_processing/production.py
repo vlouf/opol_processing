@@ -21,12 +21,10 @@ verbose variable names.
 """
 # Python Standard Library
 import os
-import re
 import time
 import uuid
 import datetime
 import warnings
-import tempfile
 
 # Other Libraries
 import pyart
@@ -368,7 +366,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     return radar
 
 
-def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True, debug=False, do_return=False):
+def process_and_save(radar_file_name, output_filename, do_dealiasing=True, use_csu=True, debug=False, do_return=False, exist_ok=False):
     """
     Run the production line and write the CF/Radial netCDF output.
 
@@ -376,8 +374,8 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True,
     ----------
     radar_file_name : str
         Name of the input radar file.
-    outpath : str
-        Root path for saving output data.
+    output_filename : str
+        Full path to output netCDF file.
     do_dealiasing : bool
         Dealias velocity with UNRAVEL.
     use_csu : bool
@@ -386,19 +384,11 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True,
         If True, print per-step and write timings.
     do_return : bool
         If True, return the processed radar object (for testing).
+    exist_ok : bool
+        If False, raise error if output file already exists. If True, overwrite.
     """
-    today = datetime.datetime.now(datetime.timezone.utc)
-
-    datestr = re.findall("[0-9]{8}", os.path.basename(radar_file_name))[0]
-    outpath_ppi = os.path.join(outpath, "ppi", datestr)
-    utils.mkdir(outpath_ppi)
-
-    base = os.path.basename(radar_file_name)
-    outfilename = re.sub(r"\.(hdf|h5|nc)$", "", base) + ".cfradial.nc"
-    outfilename = os.path.join(outpath_ppi, outfilename)
-    if os.path.isfile(outfilename):
-        print(f"Output file {outfilename} already exists.")
-        return None
+    if os.path.isfile(output_filename) and not exist_ok:
+        raise FileExistsError(f"Output file {output_filename} already exists. Use exist_ok=True to overwrite.")
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -407,6 +397,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True,
             print(f"{radar_file_name} has not been processed. Check logs.")
             return None
 
+    today = datetime.datetime.now(datetime.timezone.utc)
     radar_start_date = cftime.num2pydate(radar.time["data"][0], radar.time["units"])
     radar_end_date = cftime.num2pydate(radar.time["data"][-1], radar.time["units"])
 
@@ -463,7 +454,7 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True,
     radar.metadata = metadata
 
     tw = time.time()
-    size_saved_mb, size_saved_pct = utils.write_compressed_cfradial(radar, outfilename)
+    size_saved_mb, size_saved_pct = utils.write_compressed_cfradial(radar, output_filename)
     if debug:
         elapsed = time.time() - tw
         print(f"  [{'write_cfradial':<22}] {elapsed:7.3f} s")
