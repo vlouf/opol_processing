@@ -27,12 +27,14 @@ import time
 import uuid
 import datetime
 import warnings
+import tempfile
 
 # Other Libraries
 import pyart
 import cftime
 import numpy as np
 import pandas as pd
+from netCDF4 import Dataset
 
 # Custom modules.
 from . import attenuation
@@ -107,6 +109,123 @@ def _mkdir(path):
     return None
 
 
+def _write_compressed_cfradial(radar, outfilename):
+    """
+    Write PyART Radar object to CF/Radial netCDF4 with bit compression encoding.
+
+    Uses io.BytesIO (via SpooledTemporaryFile) for in-memory intermediate storage,
+    avoiding disk I/O for the temporary file. Data transformations applied during write.
+
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Radar object to write.
+    outfilename : str
+        Output netCDF file path.
+    """
+    # Helper to get encoding for a variable
+    def get_encoding(varname):
+        encoding = {'zlib': True, 'complevel': 4}
+
+        if varname in ['corrected_reflectivity', 'reflectivity', 'attenuation_corrected_reflectivity', "total_power"]:
+            encoding.update({'dtype': np.int8, 'scale_factor': 0.5, 'add_offset': -32})
+        elif varname == 'temperature':
+            encoding.update({'dtype': np.int8, 'scale_factor': 0.1, 'add_offset': -50})
+        elif varname in ['differential_reflectivity', 'corrected_differential_reflectivity']:
+            encoding.update({'dtype': np.int8, 'scale_factor': 0.05, 'add_offset': -6})
+        elif varname in ['differential_phase', 'corrected_differential_phase', 'corrected_specific_differential_phase']:
+            encoding.update({'dtype': np.int16, 'scale_factor': 0.01, 'add_offset': 0})
+        elif varname in ['velocity', 'corrected_velocity']:
+            encoding.update({'dtype': np.int16, 'scale_factor': 0.1, 'add_offset': -65})
+        elif varname == 'cross_correlation_ratio':
+            encoding.update({'dtype': np.int8, 'scale_factor': 0.01, 'add_offset': 0})
+        elif varname in ['azimuth', 'elevation']:
+            # CF/Radial convention: float32 with 0.01 precision (2 decimal places)
+            encoding.update({'dtype': np.float32, 'scale_factor': 0.01, 'add_offset': 0})
+        elif varname in ['radar_estimated_rain_rate', 'radar_estimated_snow_rate',
+                          'normalized_intercept_parameter', 'median_volume_diameter',
+                          'signal_to_noise_ratio', 'spectrum_width', 'signal_quality_index',
+                          'path_integrated_differential_attenuation']:
+            encoding.update({'dtype': np.int16, 'scale_factor': 0.01, 'add_offset': 0})
+
+        return encoding
+
+    # Use NamedTemporaryFile with delete=False to manage the temp file explicitly
+    with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
+        temp_filename = tmp.name
+
+    try:
+        # Write Py-ART output to temporary file
+        pyart.io.write_cfradial(temp_filename, radar, format='NETCDF4')
+
+        # Get uncompressed file size
+        uncompressed_size = os.path.getsize(temp_filename)
+
+        # Read from temp file and copy to final output with encoding
+        with Dataset(temp_filename, 'r') as src:
+            with Dataset(outfilename, 'w', format='NETCDF4') as dst:
+                # Copy dimensions
+                for name, dimension in src.dimensions.items():
+                    dst.createDimension(name, len(dimension) if not dimension.isunlimited() else None)
+
+                # Copy global attributes
+                for name in src.ncattrs():
+                    dst.setncattr(name, src.getncattr(name))
+
+                # Copy variables with re-encoding
+                for name in src.variables:
+                    var = src.variables[name]
+                    dimensions = var.dimensions
+
+                    enc = get_encoding(name)
+                    dtype = enc.pop('dtype', None) or var.dtype
+                    scale_factor = enc.pop('scale_factor', None)
+                    add_offset = enc.pop('add_offset', None)
+
+                    # Extract _FillValue if it exists (must be set at creation time)
+                    fill_value = None
+                    if '_FillValue' in var.ncattrs():
+                        fill_value = var.getncattr('_FillValue')
+
+                    new_var = dst.createVariable(name, dtype, dimensions, fill_value=fill_value, **enc)
+
+                    if scale_factor is not None:
+                        new_var.scale_factor = scale_factor
+                    if add_offset is not None:
+                        new_var.add_offset = add_offset
+
+                    # Copy attributes (skip _FillValue as it's already set)
+                    for attr_name in var.ncattrs():
+                        if attr_name not in ['scale_factor', 'add_offset', '_FillValue']:
+                            new_var.setncattr(attr_name, var.getncattr(attr_name))
+
+                    # Copy and transform data
+                    if scale_factor is not None and add_offset is not None:
+                        data = var[:]
+                        if hasattr(data, 'mask'):
+                            valid_data = (data.data - add_offset) / scale_factor
+                            valid_data = np.round(valid_data).astype(dtype)
+                            new_var[:] = np.ma.array(valid_data, mask=data.mask)
+                        else:
+                            valid_data = (data - add_offset) / scale_factor
+                            valid_data = np.round(valid_data).astype(dtype)
+                            new_var[:] = valid_data
+                    else:
+                        new_var[:] = var[:]
+
+        # Get compressed file size and calculate savings
+        compressed_size = os.path.getsize(outfilename)
+        size_reduction_mb = (uncompressed_size - compressed_size) / (1024 * 1024)
+        size_reduction_pct = 100 * (1 - compressed_size / uncompressed_size) if uncompressed_size > 0 else 0
+
+        return size_reduction_mb, size_reduction_pct
+
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+
+
 def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=False):
     """
     Production line for correcting and estimating OPOL radar parameters.
@@ -158,7 +277,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     phidp_name = fields["PHIDP"]
     snr_name = fields["SNR"]
     vel_name = fields["VRAD"]
-    sqi_name = fields["SQI"]    
+    sqi_name = fields["SQI"]
 
     # Correct time units (signal processing sometimes drops a space).
     if "since " not in radar.time["units"]:
@@ -243,12 +362,10 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     t = _toc("phidp/kdp (phido)", t, debug)
 
     # --- Velocity dealiasing (coherence censoring + UNRAVEL) ---
-    if do_dealiasing and vel_name in radar.fields:        
+    if do_dealiasing and vel_name in radar.fields:
         vgf = filtering.do_velocity_gatefilter(radar, vel_name=vel_name, sqi_name=sqi_name, th_name=th_name)
         n_coherent = int(np.count_nonzero(~vgf.gate_excluded))
         censored = np.ma.masked_where(vgf.gate_excluded, radar.fields[vel_name]["data"])
-        if debug:
-            print(f"  coherent velocity gates: {n_coherent}")
 
         if n_coherent < MIN_UNRAVEL_GATES:
             print(f"Skipping UNRAVEL: {n_coherent} coherent velocity gates (< {MIN_UNRAVEL_GATES}).")
@@ -383,7 +500,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     return radar
 
 
-def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True, debug=False):
+def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True, debug=False, do_return=False):
     """
     Run the production line and write the CF/Radial netCDF output.
 
@@ -399,8 +516,10 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True,
         Compute HID/rainfall/DSD/snow products.
     debug : bool
         If True, print per-step and write timings.
+    do_return : bool
+        If True, return the processed radar object (for testing).
     """
-    today = datetime.datetime.utcnow()
+    today = datetime.datetime.now(datetime.timezone.utc)
 
     datestr = re.findall("[0-9]{8}", os.path.basename(radar_file_name))[0]
     outpath_ppi = os.path.join(outpath, "ppi", datestr)
@@ -476,8 +595,12 @@ def process_and_save(radar_file_name, outpath, do_dealiasing=True, use_csu=True,
     radar.metadata = metadata
 
     tw = time.time()
-    pyart.io.write_cfradial(outfilename, radar, format="NETCDF4")
+    size_saved_mb, size_saved_pct = _write_compressed_cfradial(radar, outfilename)
     if debug:
-        print(f"  [{'write_cfradial':<22}] {time.time() - tw:7.3f} s")
+        elapsed = time.time() - tw
+        print(f"  [{'write_cfradial':<22}] {elapsed:7.3f} s")
+        print(f"  [{'compression savings':<22}] {size_saved_mb:7.1f} MB ({size_saved_pct:5.1f}%)")
 
+    if do_return:
+        return radar
     return None
