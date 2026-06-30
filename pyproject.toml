@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opol_processing"
+version = "0.9"
+description = "Radar PPIs data processing, quality control, filtering, attenuation correction, dealiasing, unfolding, hydrometeors calculation, rainfall rate estimation."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    {name = "Valentin Louf", email = "valentin.louf@bom.gov.au"},
+]
+keywords = ["radar", "weather", "meteorology", "dual-polarization", "hydrometeors", "rainfall"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "arm_pyart",
+    "numpy",
+    "numba",
+    "pandas",
+    "scipy",
+    "xarray",
+    "cftime",
+    "netCDF4",
+    "csu_radartools",
+    "unravel",
+    "phido",
+    "dask",
+]
+
+[project.urls]
+Homepage = "https://github.com/vlouf/opol_processing"
+
+[project.scripts]
+opol_process = "opol_processing.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["opol_processing*"]
+
+[tool.setuptools]
+packages = ["opol_processing"]
