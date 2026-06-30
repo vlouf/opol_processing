@@ -35,9 +35,6 @@ import numpy as np
 from numba import njit
 
 
-# ---------------------------------------------------------------------------
-# Numba kernels (ported verbatim from oceanpol_kit)
-# ---------------------------------------------------------------------------
 @njit(cache=True)
 def area_std(rawphi: np.ndarray, winlen: int = 10) -> np.ndarray:
     """
@@ -181,15 +178,15 @@ def _filled(data) -> np.ndarray:
     return np.ascontiguousarray(np.ma.filled(np.ma.asarray(data, dtype="float64"), np.nan))
 
 
-def get_hydrometeor_mask(dbz: np.ndarray, phidp: np.ndarray, rhohv: np.ndarray) -> np.ndarray:
+def get_hydrometeor_mask(dbz: np.ndarray, phidp: np.ndarray, rhohv: np.ndarray, zdr: np.ndarray) -> np.ndarray:
     """
     Hydrometeor noise mask (True = remove), reproducing oceanpol_kit:
     exclude where (PHIDP texture > 60) OR (RHOHV < 0.5) OR (refl < -20), but
     rescue gates where RHOHV > 0.90.
     """
     area = area_std(_filled(phidp))
-    pos = (area > 60) | (rhohv < 0.5) | (dbz < -20)
-    pos[rhohv > 0.90] = False
+    pos = (area > 60) | (rhohv < 0.5) | (dbz < -20) | (zdr <= -2) | (zdr >= 6)
+    pos[rhohv > 0.95] = False
     return pos
 
 
@@ -201,6 +198,7 @@ def do_gatefilter_opol(
     refl_name: str = "total_power",
     rhohv_name: str = "cross_correlation_ratio",
     phidp_name: str = "PHIDP",
+    zdr_name: str = "ZDR",
 ) -> "pyart.filters.GateFilter":
     """
     Reflectivity-cleaning gate filter from ``get_hydrometeor_mask`` thresholds.
@@ -212,8 +210,9 @@ def do_gatefilter_opol(
     dbz = _filled(radar.fields[refl_name]["data"])
     phidp = _filled(radar.fields[phidp_name]["data"])
     rhohv = _filled(radar.fields[rhohv_name]["data"])
+    zdr = _filled(radar.fields[zdr_name]["data"])
 
-    mask = get_hydrometeor_mask(dbz, phidp, rhohv)
+    mask = get_hydrometeor_mask(dbz, phidp, rhohv, zdr)
 
     gf = pyart.filters.GateFilter(radar)
     gf.exclude_gates(mask)
