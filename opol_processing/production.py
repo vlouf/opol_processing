@@ -42,6 +42,9 @@ from . import radar_codes
 from . import temperature
 from . import utils
 
+# --- Drop low elevations (≤ 0.6°) and truncate to 150 km ---
+MIN_ELEVATION_DEG = 0.6
+MAX_RANGE_M = 150_000.0
 
 # If the number of coherent velocity gates left after noise censoring is below
 # this value, UNRAVEL is skipped and the censored velocity is passed through.
@@ -130,6 +133,26 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
             if debug:
                 print(f"  Decimated rays from 0.5° to 1° azimuth resolution")
             t = utils.toc("decimate rays", t, debug)
+        
+    ind_sweeps = np.where(radar.fixed_angle["data"] > MIN_ELEVATION_DEG)[0].tolist()
+    if len(ind_sweeps) < radar.nsweeps:
+        if debug:
+            dropped = radar.nsweeps - len(ind_sweeps)
+            print(f"  Dropping {dropped} sweep(s) \u2264 {MIN_ELEVATION_DEG}\u00b0; {len(ind_sweeps)} remaining")
+        radar = radar.extract_sweeps(ind_sweeps)
+
+    ind_rng = np.where(radar.range["data"] <= MAX_RANGE_M)[0]
+    if ind_rng.size < radar.ngates:
+        radar.range["data"] = radar.range["data"][ind_rng]
+        radar.ngates = ind_rng.size
+        radar.init_gate_x_y_z()
+        radar.init_gate_longitude_latitude()
+        radar.init_gate_altitude()
+        for _f in list(radar.fields):
+            radar.fields[_f]["data"] = radar.fields[_f]["data"][:, ind_rng]
+        if debug:
+            print(f"  Range truncated to {MAX_RANGE_M / 1000:.0f} km ({ind_rng.size} gates)")
+    t = utils.toc("domain trim", t, debug)
 
     # Resolve field names once for the whole volume (raises if a required field
     # is missing).
@@ -350,6 +373,14 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     for key in list(radar.fields.keys()):
         if key not in KEEP_FIELDS:
             radar.fields.pop(key, None)
+
+    # --- Apply TH mask to raw moments (fields whose noise is not informative) ---
+    # cross_correlation_ratio, differential_phase, signal_to_noise_ratio,
+    # signal_quality_index and temperature are intentionally left unmasked.
+    th_mask = np.ma.getmaskarray(dbz_clean)
+    for _raw in ("reflectivity", "differential_reflectivity", "velocity", "spectrum_width"):
+        if _raw in radar.fields:
+            radar.fields[_raw]["data"] = np.ma.masked_where(th_mask, radar.fields[_raw]["data"])
 
     # --- Finalise metadata, fill missing values, return ---
     radar_codes.set_significant_digits(radar)
