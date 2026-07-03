@@ -41,7 +41,7 @@ from typing import Dict, List, Tuple, Optional
 
 import dask.bag as db
 import opol_processing
-
+import unravel
 
 class VoyageProcessor:
     """
@@ -489,9 +489,9 @@ def main():
 
         try:
             # Create dask bag and process
-            bag = db.from_sequence(file_chunk, npartitions=min(args.n_workers, len(file_chunk)))
+            bag = db.from_sequence(file_chunk)
             bag = bag.map(lambda f: process_buffer(f, processor))
-            results = bag.compute()
+            results = bag.compute(num_workers=args.n_workers)
 
             # Update tracking serially for all results (no race conditions)
             success_count = 0
@@ -529,7 +529,8 @@ def main():
 
 if __name__ == "__main__":
     if "PYART_QUIET" not in os.environ:
-        os.environ["PYART_QUIET"] = "True"  # Suppress Py-ART warnings
+        os.environ["PYART_QUIET"] = "1"  # Suppress Py-ART warnings
+    unravel.warmup()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         sys.exit(main())
