@@ -149,19 +149,19 @@ def get_rainfall_estimate(
         tmp = 24.199 * kdp ** (0.827) * sigma_dr ** (-0.488)
     rainfall[pos] = tmp[pos]
 
-    rainfall[np.isnan(rainfall) | (temperature <= -18)] = 0
+    rainfall[np.isnan(rainfall) | (temperature <= -10)] = 0
     return rainfall
 
 
 def get_snowfall_estimate(dbz_clean: np.ndarray, kdp: np.ndarray, temps: np.ndarray) -> np.ndarray:
     """
     Estimate snowfall rate from reflectivity and KDP; valid below freezing only
-    (set to NaN where temperature > 0).
+    (set to 0 where temperature > 0).
 
     Parameters
     ----------
     dbz_clean, kdp, temps : np.ndarray
-        2D radar fields (NaN-filled). Temperature in degC.
+        2D radar fields. Temperature in degC.
 
     Returns
     -------
@@ -169,5 +169,5 @@ def get_snowfall_estimate(dbz_clean: np.ndarray, kdp: np.ndarray, temps: np.ndar
         2D snowfall rate.
     """
     snow = 1.48 * kdp**0.615 * (10 ** (dbz_clean / 10)) ** 0.33
-    snow[temps > 0] = np.nan
+    snow[np.isnan(snow) | (temps > 0)] = 0
     return snow
