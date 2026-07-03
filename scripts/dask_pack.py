@@ -530,7 +530,10 @@ def main():
 if __name__ == "__main__":
     if "PYART_QUIET" not in os.environ:
         os.environ["PYART_QUIET"] = "1"  # Suppress Py-ART warnings
-    unravel.warmup()
+    try:
+        unravel.warmup()
+    except Exception as e:
+        pass
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         sys.exit(main())
