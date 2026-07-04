@@ -36,6 +36,10 @@ import argparse
 import warnings
 import traceback
 import logging
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
+
 from collections import Counter
 from functools import partial
 from pathlib import Path
@@ -57,7 +61,7 @@ class VoyageProcessor:
     - Logging and summary reporting
     """
 
-    def __init__(self, input_dir: str, output_dir: str, chunk_size: int = 64,
+    def __init__(self, input_dir: str, output_dir: str,
                  do_dealiasing: bool = True, debug: bool = False):
         """
         Initialize voyage processor.
@@ -68,8 +72,6 @@ class VoyageProcessor:
             Path to read-only input directory containing raw .hdf files
         output_dir : str
             Path to output directory for processed files and tracking
-        chunk_size : int
-            Number of files to process per chunk
         do_dealiasing : bool
             Enable velocity dealiasing
         debug : bool
@@ -80,7 +82,6 @@ class VoyageProcessor:
         self.processed_dir = self.output_dir / "processed"
         self.tracking_dir = self.output_dir / ".processing"
 
-        self.chunk_size = chunk_size
         self.do_dealiasing = do_dealiasing
         self.debug = debug
 
@@ -95,7 +96,6 @@ class VoyageProcessor:
         self.completed = {}
         self.failed = {}
         self.skipped = {}
-        self.current_checkpoint = None
 
         # Setup
         self._validate_paths()
@@ -146,10 +146,6 @@ class VoyageProcessor:
         if self.skipped_file.exists():
             with open(self.skipped_file, 'r', encoding='utf-8') as f:
                 self.skipped = json.load(f)
-
-        if self.checkpoint_file.exists():
-            with open(self.checkpoint_file, 'r', encoding='utf-8') as f:
-                self.current_checkpoint = f.read().strip()
 
     def _setup_logging(self):
         """Setup logging to file and console."""
@@ -208,18 +204,30 @@ class VoyageProcessor:
         work_queue : list of str
             Input file paths to process
         """
-        # Get all .hdf files in input directory
-        all_files = sorted(glob.glob(str(self.input_dir / "*.hdf")))
-        if not all_files:
-            # Try recursive search
-            all_files = sorted(glob.glob(str(self.input_dir / "**/*.hdf"), recursive=True))
+        # Always scan recursively so nested files are never missed.
+        all_files = sorted(glob.glob(str(self.input_dir / "**/*.hdf"), recursive=True))
+
+        # Edge case support: duplicate basenames can exist across subdirectories.
+        # Keep only one path per basename (deterministically the first sorted path).
+        unique_by_basename = {}
+        duplicate_paths = {}
+        for input_file in all_files:
+            basename = os.path.basename(input_file)
+            if basename not in unique_by_basename:
+                unique_by_basename[basename] = input_file
+                continue
+
+            duplicate_paths.setdefault(basename, [unique_by_basename[basename]]).append(input_file)
+
+        candidate_files = list(unique_by_basename.values())
 
         # Filter to only files not yet completed
         work_queue = []
         skipped_completed = 0
         skipped_failed = 0
+        skipped_duplicates = len(all_files) - len(candidate_files)
 
-        for input_file in all_files:
+        for input_file in candidate_files:
             basename = os.path.basename(input_file)
 
             if basename in self.completed:
@@ -234,44 +242,26 @@ class VoyageProcessor:
             work_queue.append(input_file)
 
         self.logger.info(
-            f"Found {len(all_files)} total files: {len(work_queue)} to process, "
-            f"{skipped_completed} skipped (already completed), {skipped_failed} skipped (previously failed)"
+            f"Found {len(all_files)} total files ({len(candidate_files)} unique basenames): {len(work_queue)} to process, "
+            f"{skipped_completed} skipped (already completed), {skipped_failed} skipped (previously failed), "
+            f"{skipped_duplicates} duplicate-path files ignored"
         )
+
+        if duplicate_paths:
+            self.logger.warning(
+                f"Duplicate basenames detected across subdirectories: {len(duplicate_paths)} basenames. "
+                "Only one file per basename will be processed (first path in sorted order)."
+            )
+            # Keep the log concise while still actionable.
+            preview_items = list(duplicate_paths.items())[:10]
+            for basename, paths in preview_items:
+                self.logger.warning(f"  Duplicate basename {basename}: {paths}")
+            if len(duplicate_paths) > len(preview_items):
+                self.logger.warning(
+                    f"  ... {len(duplicate_paths) - len(preview_items)} more duplicate basenames not shown"
+                )
+
         return work_queue
-
-    def generate_output_filename(self, input_file: str) -> str:
-        """
-        Generate output filename from input filename with date-based organization.
-
-        Extracts YYYYMMDD from filename and creates directory structure:
-        processed/YYYYMMDD/filename.cfradial.nc
-
-        Parameters
-        ----------
-        input_file : str
-            Input .hdf filename
-
-        Returns
-        -------
-        output_file : str
-            Full path to output .cfradial.nc file
-        """
-        basename = os.path.basename(input_file)
-
-        # Extract date from filename (first 8 consecutive digits)
-        date_str = self._extract_date_from_filename(basename)
-        if date_str is None:
-            # Fallback: use current date if extraction fails
-            date_str = datetime.now().strftime("%Y%m%d")
-
-        # Replace extension: .hdf -> .cfradial.nc
-        output_basename = basename.replace('.hdf', '.cfradial.nc')
-
-        # Create date subdirectory structure: processed/YYYYMMDD/filename.nc
-        date_dir = self.processed_dir / date_str
-        date_dir.mkdir(parents=True, exist_ok=True)
-
-        return str(date_dir / output_basename)
 
     def record_success(self, input_file: str, output_file: str):
         """Record successful processing."""
@@ -347,6 +337,207 @@ class VoyageProcessor:
         self.logger.info("=" * 80)
 
 
+class RunResultHandler:
+    """Centralizes per-chunk result handling and run artifacts updates."""
+
+    def __init__(self, processor: VoyageProcessor, failure_csv: Path):
+        self.processor = processor
+        self.failure_csv = failure_csv
+
+    def handle_results(
+        self,
+        chunk_idx: int,
+        chunk_start: float,
+        results: List[Tuple[str, str, str, Optional[str]]],
+        retried_serial: bool = False,
+    ) -> int:
+        """Update tracking for a chunk and emit actionable diagnostics."""
+        success_count = 0
+        failed_count = 0
+        skipped_count = 0
+        skip_reasons = Counter()
+        last_success_file = None
+
+        for input_file, output_file, status, error_msg in results:
+            basename = os.path.basename(input_file)
+            if status == "success":
+                self.processor.record_success(input_file, output_file)
+                success_count += 1
+                last_success_file = input_file
+                self.processor.logger.info(f"SUCCESS {basename} -> {output_file}")
+            elif status == "failed":
+                self.processor.record_failure(input_file, error_msg or "Unknown error")
+                failed_count += 1
+                short_error = (error_msg or "").splitlines()[0] if error_msg else "Unknown error"
+                self.processor.logger.error(f"FAILED {basename}: {short_error}")
+
+                if error_msg:
+                    head, _, tb = error_msg.partition("\n")
+                    error_type, _, error_message = head.partition(": ")
+                else:
+                    error_type, error_message, tb = "UnknownError", "Unknown error", ""
+
+                with open(self.failure_csv, "a", newline="", encoding="utf-8") as fcsv:
+                    csv_writer = csv.writer(fcsv)
+                    csv_writer.writerow([
+                        datetime.now().isoformat(),
+                        chunk_idx,
+                        input_file,
+                        basename,
+                        status,
+                        error_type,
+                        error_message,
+                        tb,
+                    ])
+            elif status == "skipped":
+                skipped_count += 1
+                reason = error_msg or "unknown"
+                skip_reasons[reason] += 1
+                self.processor.record_skip(input_file, reason)
+
+        self.processor.flush_tracking()
+        if last_success_file is not None:
+            self.processor.update_checkpoint(last_success_file)
+
+        chunk_elapsed = time.time() - chunk_start
+        summary_prefix = "Chunk retry" if retried_serial else "Chunk"
+        self.processor.logger.info(
+            f"{summary_prefix} {chunk_idx} complete: {success_count} success, "
+            f"{failed_count} failed, {skipped_count} skipped ({chunk_elapsed:.1f}s)"
+        )
+        if skip_reasons:
+            reason_summary = ", ".join([f"{reason}={count}" for reason, count in skip_reasons.items()])
+            self.processor.logger.info(f"Chunk {chunk_idx} skip reasons: {reason_summary}")
+
+        return success_count
+
+
+class StartupDiagnostics:
+    """Encapsulates startup environment checks and process backend setup."""
+
+    def __init__(self, logger, args):
+        self.logger = logger
+        self.args = args
+
+    @staticmethod
+    def effective_cpu_count() -> int:
+        """Return effective CPU count (affinity-aware when available)."""
+        try:
+            with open("/proc/self/status", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("Cpus_allowed_list:"):
+                        cpu_list = line.split(":", 1)[1].strip()
+                        if not cpu_list:
+                            break
+
+                        count = 0
+                        for part in cpu_list.split(","):
+                            part = part.strip()
+                            if not part:
+                                continue
+                            if "-" in part:
+                                start_s, end_s = part.split("-", 1)
+                                count += int(end_s) - int(start_s) + 1
+                            else:
+                                count += 1
+
+                        if count > 0:
+                            return count
+        except Exception:
+            pass
+        return os.cpu_count() or 1
+
+    @staticmethod
+    def total_memory_bytes() -> Optional[int]:
+        """Best-effort total memory probe from /proc/meminfo (Linux)."""
+        try:
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        parts = line.split()
+                        # MemTotal is in kB.
+                        return int(parts[1]) * 1024
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def fmt_gib(num_bytes: int) -> str:
+        """Format bytes as GiB for logs."""
+        return f"{num_bytes / (1024 ** 3):.1f} GiB"
+
+    @staticmethod
+    def get_mp_context(start_method: str):
+        """Return multiprocessing context for a requested start method."""
+        if start_method == "auto":
+            # On Linux/HPC, fork often gives much better memory sharing than spawn.
+            if sys.platform.startswith("linux"):
+                try:
+                    return mp.get_context("fork"), "fork"
+                except ValueError:
+                    pass
+            return mp.get_context("spawn"), "spawn"
+
+        return mp.get_context(start_method), start_method
+
+    def log_runtime_limits(self) -> int:
+        """Log startup diagnostics and return effective CPU count."""
+        detected_cpus = os.cpu_count() or 1
+        effective_cpus = self.effective_cpu_count()
+        mem_bytes = self.total_memory_bytes()
+        omp_threads = os.environ.get("OMP_NUM_THREADS", "unset")
+        openblas_threads = os.environ.get("OPENBLAS_NUM_THREADS", "unset")
+        mkl_threads = os.environ.get("MKL_NUM_THREADS", "unset")
+        numexpr_threads = os.environ.get("NUMEXPR_NUM_THREADS", "unset")
+
+        self.logger.info(
+            "Startup diagnostics: cpu_count=%s, effective_cpu_affinity=%s, requested_workers=%s, chunk_size=%s",
+            detected_cpus,
+            effective_cpus,
+            self.args.n_workers,
+            self.args.chunk_size,
+        )
+        self.logger.info(
+            "Startup diagnostics: OMP_NUM_THREADS=%s, OPENBLAS_NUM_THREADS=%s, MKL_NUM_THREADS=%s, NUMEXPR_NUM_THREADS=%s",
+            omp_threads,
+            openblas_threads,
+            mkl_threads,
+            numexpr_threads,
+        )
+
+        if mem_bytes is not None:
+            mem_per_worker_est = 12 * 1024 ** 3  # Heuristic for this workload.
+            mem_bound_workers = max(1, mem_bytes // mem_per_worker_est)
+            suggested_workers = max(1, min(effective_cpus, mem_bound_workers, self.args.n_workers))
+            self.logger.info(
+                "Startup diagnostics: total_mem=%s, heuristic_mem_bound_workers(~12GiB/worker)=%s, suggested_workers=%s",
+                self.fmt_gib(mem_bytes),
+                mem_bound_workers,
+                suggested_workers,
+            )
+        else:
+            self.logger.info(
+                "Startup diagnostics: total_mem=unknown (could not read /proc/meminfo), suggested_workers<=%s",
+                effective_cpus,
+            )
+
+        if self.args.n_workers > effective_cpus:
+            self.logger.warning(
+                "Requested workers (%s) exceeds effective CPU affinity (%s). Some workers may remain idle.",
+                self.args.n_workers,
+                effective_cpus,
+            )
+
+        if self.args.chunk_size < min(self.args.n_workers, effective_cpus):
+            self.logger.warning(
+                "Chunk size (%s) is lower than active worker target (%s). This can underutilize workers.",
+                self.args.chunk_size,
+                min(self.args.n_workers, effective_cpus),
+            )
+
+        return effective_cpus
+
+
 def generate_output_filename(input_file: str, processed_root: str) -> str:
     """Build output path using YYYYMMDD subdirectories under processed_root."""
     basename = os.path.basename(input_file)
@@ -363,7 +554,6 @@ def generate_output_filename(input_file: str, processed_root: str) -> str:
 def process_buffer(
     input_file: str,
     processed_root: str,
-    completed_basenames: set,
     do_dealiasing: bool,
     debug: bool,
 ) -> Tuple[str, str, str, Optional[str]]:
@@ -380,8 +570,6 @@ def process_buffer(
         Input .hdf file path
     processed_root : str
         Root directory for processed files
-    completed_basenames : set
-        Snapshot of already-completed file basenames
     do_dealiasing : bool
         Enable velocity dealiasing
     debug : bool
@@ -396,11 +584,6 @@ def process_buffer(
     """
     try:
         output_file = generate_output_filename(input_file, processed_root)
-
-        # Check if file is already in completed tracking snapshot.
-        basename = os.path.basename(input_file)
-        if basename in completed_basenames:
-            return (input_file, output_file, "skipped", "already_completed_tracking")
 
         # Process file
         result = opol_processing.process_and_save(
@@ -434,32 +617,8 @@ def process_buffer(
         return (input_file, "", "failed", error_msg)
 
 
-def chunks(items: list, n: int):
-    """
-    Yield successive n-sized chunks from list.
-
-    Parameters
-    ----------
-    items : list
-        List to chunk
-    n : int
-        Chunk size
-
-    Yields
-    ------
-    list
-        Chunks of size n
-    """
-    for i in range(0, len(items), n):
-        yield items[i : i + n]
-
-
-def main():
-    """
-    Main processing loop.
-
-    Processes voyage files in chunks using Dask.
-    """
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return CLI argument parser."""
     parser = argparse.ArgumentParser(
         description="Distributed OPOL radar processing with separate input/output directories."
     )
@@ -510,14 +669,38 @@ def main():
         action="store_true",
         help="Print debug output"
     )
+    parser.add_argument(
+        "--backend",
+        dest="backend",
+        type=str,
+        default="processpool",
+        choices=["processpool", "dask"],
+        help="Parallel backend to use (default: processpool)"
+    )
+    parser.add_argument(
+        "--mp-start-method",
+        dest="mp_start_method",
+        type=str,
+        default="auto",
+        choices=["auto", "fork", "spawn", "forkserver"],
+        help="Multiprocessing start method for processpool backend (default: auto)"
+    )
+    return parser
 
+
+def main():
+    """
+    Main processing loop.
+
+    Processes voyage files in chunks using Dask.
+    """
+    parser = build_parser()
     args = parser.parse_args()
 
     # Initialize processor
     processor = VoyageProcessor(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
-        chunk_size=args.chunk_size,
         do_dealiasing=args.do_dealiasing,
         debug=args.debug
     )
@@ -532,7 +715,22 @@ def main():
     processor.logger.info(f"Chunk size: {args.chunk_size}")
     processor.logger.info(f"Workers: {args.n_workers}")
     processor.logger.info(f"Dealiasing: {args.do_dealiasing}")
+    processor.logger.info(f"Backend: {args.backend}")
     processor.logger.info("=" * 80)
+
+    diagnostics = StartupDiagnostics(processor.logger, args)
+    diagnostics.log_runtime_limits()
+
+    pool_context = None
+    selected_start_method = None
+    executor: Optional[ProcessPoolExecutor] = None
+    if args.backend == "processpool":
+        pool_context, selected_start_method = diagnostics.get_mp_context(args.mp_start_method)
+        processor.logger.info(
+            "Startup diagnostics: processpool start_method=%s",
+            selected_start_method,
+        )
+        executor = ProcessPoolExecutor(max_workers=args.n_workers, mp_context=pool_context)
 
     # Run-level failure CSV report for postmortem diagnostics.
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -550,6 +748,7 @@ def main():
             "traceback",
         ])
     processor.logger.info(f"Failure CSV report: {failure_csv}")
+    result_handler = RunResultHandler(processor, failure_csv)
 
     # Build work queue
     work_queue = processor.build_work_queue()
@@ -564,88 +763,40 @@ def main():
     start_time = time.time()
     processed_this_run = 0
 
-    def handle_results(chunk_idx: int, chunk_start: float, results: List[Tuple[str, str, str, Optional[str]]], retried_serial: bool = False) -> int:
-        """Update tracking for a chunk and emit actionable diagnostics."""
-        success_count = 0
-        failed_count = 0
-        skipped_count = 0
-        skip_reasons = Counter()
-        last_success_file = None
-
-        for input_file, output_file, status, error_msg in results:
-            basename = os.path.basename(input_file)
-            if status == "success":
-                processor.record_success(input_file, output_file)
-                success_count += 1
-                last_success_file = input_file
-                processor.logger.info(f"SUCCESS {basename} -> {output_file}")
-            elif status == "failed":
-                processor.record_failure(input_file, error_msg or "Unknown error")
-                failed_count += 1
-                short_error = (error_msg or "").splitlines()[0] if error_msg else "Unknown error"
-                processor.logger.error(f"FAILED {basename}: {short_error}")
-
-                if error_msg:
-                    head, _, tb = error_msg.partition("\n")
-                    error_type, _, error_message = head.partition(": ")
-                else:
-                    error_type, error_message, tb = "UnknownError", "Unknown error", ""
-
-                with open(failure_csv, "a", newline="", encoding="utf-8") as fcsv:
-                    csv_writer = csv.writer(fcsv)
-                    csv_writer.writerow([
-                        datetime.now().isoformat(),
-                        chunk_idx,
-                        input_file,
-                        basename,
-                        status,
-                        error_type,
-                        error_message,
-                        tb,
-                    ])
-            elif status == "skipped":
-                skipped_count += 1
-                reason = error_msg or "unknown"
-                skip_reasons[reason] += 1
-                processor.record_skip(input_file, reason)
-
-        processor.flush_tracking()
-        if last_success_file is not None:
-            processor.update_checkpoint(last_success_file)
-
-        chunk_elapsed = time.time() - chunk_start
-        summary_prefix = "Chunk retry" if retried_serial else "Chunk"
-        processor.logger.info(
-            f"{summary_prefix} {chunk_idx} complete: {success_count} success, "
-            f"{failed_count} failed, {skipped_count} skipped ({chunk_elapsed:.1f}s)"
-        )
-        if skip_reasons:
-            reason_summary = ", ".join([f"{reason}={count}" for reason, count in skip_reasons.items()])
-            processor.logger.info(f"Chunk {chunk_idx} skip reasons: {reason_summary}")
-
-        return success_count
-
     # Process in chunks
-    for chunk_idx, file_chunk in enumerate(chunks(work_queue, args.chunk_size), 1):
+    for chunk_idx, chunk_start_idx in enumerate(range(0, len(work_queue), args.chunk_size), 1):
+        file_chunk = work_queue[chunk_start_idx : chunk_start_idx + args.chunk_size]
         processor.logger.info(f"\nProcessing chunk {chunk_idx} ({len(file_chunk)} files)...")
         chunk_start = time.time()
-        completed_snapshot = set(processor.completed.keys())
         process_file = partial(
             process_buffer,
             processed_root=str(processor.processed_dir),
-            completed_basenames=completed_snapshot,
             do_dealiasing=processor.do_dealiasing,
             debug=processor.debug,
         )
 
         try:
-            # Create dask bag and process
-            npartitions = min(max(args.n_workers, 1), len(file_chunk))
-            bag = db.from_sequence(file_chunk, npartitions=npartitions)
-            bag = bag.map(process_file)
-            results = bag.compute(num_workers=args.n_workers, scheduler="processes")
+            if args.backend == "dask":
+                npartitions = min(max(args.n_workers, 1), len(file_chunk))
+                bag = db.from_sequence(file_chunk, npartitions=npartitions)
+                bag = bag.map(process_file)
+                results = bag.compute(num_workers=args.n_workers, scheduler="processes")
+            else:
+                results = []
+                if executor is None:
+                    raise RuntimeError("Process pool executor is not initialized")
+                future_to_input = {
+                    executor.submit(process_file, input_file): input_file for input_file in file_chunk
+                }
+                for future in as_completed(future_to_input):
+                    input_file = future_to_input[future]
+                    try:
+                        results.append(future.result())
+                    except Exception as exc:
+                        err = f"{type(exc).__name__}: {exc}"
+                        results.append((input_file, "", "failed", err))
 
-            processed_this_run += handle_results(chunk_idx, chunk_start, results, retried_serial=False)
+            processed_this_run += result_handler.handle_results(chunk_idx, chunk_start, results, retried_serial=False)
 
         except Exception as e:
             processor.logger.error(f"Chunk {chunk_idx} failed with error: {e}\n{traceback.format_exc()}")
@@ -653,15 +804,27 @@ def main():
                 f"Retrying chunk {chunk_idx} serially to isolate failing files and capture detailed errors..."
             )
 
-            retry_results = [process_file(input_file) for input_file in file_chunk]
-            processed_this_run += handle_results(chunk_idx, chunk_start, retry_results, retried_serial=True)
+            if args.backend == "processpool" and isinstance(e, BrokenProcessPool):
+                processor.logger.error("Process pool is broken; recreating executor for next chunk.")
+                if executor is not None:
+                    try:
+                        executor.shutdown(wait=True, cancel_futures=True)
+                    except Exception:
+                        pass
+                executor = ProcessPoolExecutor(max_workers=args.n_workers, mp_context=pool_context)
 
-        if 'bag' in locals():
+            retry_results = [process_file(input_file) for input_file in file_chunk]
+            processed_this_run += result_handler.handle_results(chunk_idx, chunk_start, retry_results, retried_serial=True)
+
+        if args.backend == "dask" and 'bag' in locals():
             del bag
 
     # Final summary
     processor.logger.info(f"\nFiles processed in this run: {processed_this_run}")
     processor.print_summary(start_time)
+
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=True)
 
     return 0
 
