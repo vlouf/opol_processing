@@ -62,7 +62,8 @@ class VoyageProcessor:
     """
 
     def __init__(self, input_dir: str, output_dir: str,
-                 do_dealiasing: bool = True, debug: bool = False):
+                 do_dealiasing: bool = True, debug: bool = False,
+                 retry_failed: bool = False):
         """
         Initialize voyage processor.
 
@@ -76,6 +77,8 @@ class VoyageProcessor:
             Enable velocity dealiasing
         debug : bool
             Print debug output
+        retry_failed : bool
+            If True, include previously failed files in the work queue
         """
         self.input_dir = Path(input_dir).resolve()
         self.output_dir = Path(output_dir).resolve()
@@ -84,6 +87,7 @@ class VoyageProcessor:
 
         self.do_dealiasing = do_dealiasing
         self.debug = debug
+        self.retry_failed = retry_failed
 
         # Tracking files
         self.completed_file = self.tracking_dir / "completed.json"
@@ -234,7 +238,7 @@ class VoyageProcessor:
                 skipped_completed += 1
                 continue
 
-            if basename in self.failed:
+            if basename in self.failed and not self.retry_failed:
                 # Skip recently failed (can be retried with --retry flag)
                 skipped_failed += 1
                 continue
@@ -670,6 +674,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print debug output"
     )
     parser.add_argument(
+        "--retry-failed",
+        dest="retry_failed",
+        action="store_true",
+        help="Retry files listed in failed.json instead of skipping them"
+    )
+    parser.add_argument(
         "--backend",
         dest="backend",
         type=str,
@@ -702,7 +712,8 @@ def main():
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         do_dealiasing=args.do_dealiasing,
-        debug=args.debug
+        debug=args.debug,
+        retry_failed=args.retry_failed,
     )
 
     processor.logger.info("=" * 80)
@@ -716,6 +727,7 @@ def main():
     processor.logger.info(f"Workers: {args.n_workers}")
     processor.logger.info(f"Dealiasing: {args.do_dealiasing}")
     processor.logger.info(f"Backend: {args.backend}")
+    processor.logger.info(f"Retry failed: {args.retry_failed}")
     processor.logger.info("=" * 80)
 
     diagnostics = StartupDiagnostics(processor.logger, args)
@@ -724,6 +736,7 @@ def main():
     pool_context = None
     selected_start_method = None
     executor: Optional[ProcessPoolExecutor] = None
+    broken_pool_count = 0
     if args.backend == "processpool":
         pool_context, selected_start_method = diagnostics.get_mp_context(args.mp_start_method)
         processor.logger.info(
@@ -792,11 +805,17 @@ def main():
                     input_file = future_to_input[future]
                     try:
                         results.append(future.result())
+                    except BrokenProcessPool:
+                        # This is an infrastructure failure, not a file-level failure.
+                        # Bubble up so we can recreate the pool and retry the chunk.
+                        raise
                     except Exception as exc:
                         err = f"{type(exc).__name__}: {exc}"
                         results.append((input_file, "", "failed", err))
 
             processed_this_run += result_handler.handle_results(chunk_idx, chunk_start, results, retried_serial=False)
+            if args.backend == "processpool":
+                broken_pool_count = 0
 
         except Exception as e:
             processor.logger.error(f"Chunk {chunk_idx} failed with error: {e}\n{traceback.format_exc()}")
@@ -805,12 +824,22 @@ def main():
             )
 
             if args.backend == "processpool" and isinstance(e, BrokenProcessPool):
+                broken_pool_count += 1
                 processor.logger.error("Process pool is broken; recreating executor for next chunk.")
                 if executor is not None:
                     try:
                         executor.shutdown(wait=True, cancel_futures=True)
                     except Exception:
                         pass
+
+                # If fork repeatedly breaks, fall back to spawn for stability.
+                if selected_start_method == "fork" and broken_pool_count >= 2:
+                    processor.logger.warning(
+                        "Repeated BrokenProcessPool with fork (%s times). Switching process start method to spawn.",
+                        broken_pool_count,
+                    )
+                    pool_context, selected_start_method = diagnostics.get_mp_context("spawn")
+
                 executor = ProcessPoolExecutor(max_workers=args.n_workers, mp_context=pool_context)
 
             retry_results = [process_file(input_file) for input_file in file_chunk]
