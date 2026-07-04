@@ -30,14 +30,17 @@ import re
 import sys
 import json
 import glob
+import csv
 import time
 import argparse
 import warnings
 import traceback
 import logging
+from collections import Counter
+from functools import partial
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
+from typing import List, Tuple, Optional
 
 import dask.bag as db
 import opol_processing
@@ -84,12 +87,14 @@ class VoyageProcessor:
         # Tracking files
         self.completed_file = self.tracking_dir / "completed.json"
         self.failed_file = self.tracking_dir / "failed.json"
+        self.skipped_file = self.tracking_dir / "skipped.json"
         self.checkpoint_file = self.tracking_dir / "checkpoint.txt"
         self.log_dir = self.tracking_dir / "logs"
 
         # State
         self.completed = {}
         self.failed = {}
+        self.skipped = {}
         self.current_checkpoint = None
 
         # Setup
@@ -110,7 +115,7 @@ class VoyageProcessor:
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            raise PermissionError(f"Cannot create output directory {self.output_dir}: {e}")
+            raise PermissionError(f"Cannot create output directory {self.output_dir}: {e}") from e
 
         if not os.access(self.output_dir, os.W_OK):
             raise PermissionError(f"Output directory is not writable: {self.output_dir}")
@@ -125,19 +130,25 @@ class VoyageProcessor:
             self._write_json(self.completed_file, {})
         if not self.failed_file.exists():
             self._write_json(self.failed_file, {})
+        if not self.skipped_file.exists():
+            self._write_json(self.skipped_file, {})
 
     def _load_progress(self):
         """Load existing progress from tracking files."""
         if self.completed_file.exists():
-            with open(self.completed_file, 'r') as f:
+            with open(self.completed_file, 'r', encoding='utf-8') as f:
                 self.completed = json.load(f)
 
         if self.failed_file.exists():
-            with open(self.failed_file, 'r') as f:
+            with open(self.failed_file, 'r', encoding='utf-8') as f:
                 self.failed = json.load(f)
 
+        if self.skipped_file.exists():
+            with open(self.skipped_file, 'r', encoding='utf-8') as f:
+                self.skipped = json.load(f)
+
         if self.checkpoint_file.exists():
-            with open(self.checkpoint_file, 'r') as f:
+            with open(self.checkpoint_file, 'r', encoding='utf-8') as f:
                 self.current_checkpoint = f.read().strip()
 
     def _setup_logging(self):
@@ -149,7 +160,7 @@ class VoyageProcessor:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_file),
+                logging.FileHandler(log_file, encoding='utf-8'),
                 logging.StreamHandler()
             ]
         )
@@ -160,7 +171,7 @@ class VoyageProcessor:
         """Atomically write JSON file."""
         # Write to temp file first, then rename (atomic)
         temp_file = filepath.with_suffix(filepath.suffix + '.tmp')
-        with open(temp_file, 'w') as f:
+        with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         temp_file.replace(filepath)
 
@@ -205,23 +216,27 @@ class VoyageProcessor:
 
         # Filter to only files not yet completed
         work_queue = []
-        skipped = 0
+        skipped_completed = 0
+        skipped_failed = 0
 
         for input_file in all_files:
             basename = os.path.basename(input_file)
 
             if basename in self.completed:
-                skipped += 1
+                skipped_completed += 1
                 continue
 
             if basename in self.failed:
                 # Skip recently failed (can be retried with --retry flag)
-                skipped += 1
+                skipped_failed += 1
                 continue
 
             work_queue.append(input_file)
 
-        self.logger.info(f"Found {len(all_files)} total files: {len(work_queue)} to process, {skipped} skipped")
+        self.logger.info(
+            f"Found {len(all_files)} total files: {len(work_queue)} to process, "
+            f"{skipped_completed} skipped (already completed), {skipped_failed} skipped (previously failed)"
+        )
         return work_queue
 
     def generate_output_filename(self, input_file: str) -> str:
@@ -267,7 +282,8 @@ class VoyageProcessor:
         }
         # Remove from failed if it was previously failed
         self.failed.pop(basename, None)
-        self._write_json(self.completed_file, self.completed)
+        # Success supersedes any previous skip record.
+        self.skipped.pop(basename, None)
 
     def record_failure(self, input_file: str, error_msg: str):
         """Record failed processing."""
@@ -276,11 +292,25 @@ class VoyageProcessor:
             'error': error_msg,
             'timestamp': datetime.now().isoformat()
         }
+        self.skipped.pop(basename, None)
+
+    def record_skip(self, input_file: str, reason: str):
+        """Record skipped processing (e.g. unsuitable scan)."""
+        basename = os.path.basename(input_file)
+        self.skipped[basename] = {
+            'reason': reason,
+            'timestamp': datetime.now().isoformat()
+        }
+
+    def flush_tracking(self):
+        """Persist all tracking dictionaries once per chunk."""
+        self._write_json(self.completed_file, self.completed)
         self._write_json(self.failed_file, self.failed)
+        self._write_json(self.skipped_file, self.skipped)
 
     def update_checkpoint(self, input_file: str):
         """Update processing checkpoint."""
-        with open(self.checkpoint_file, 'w') as f:
+        with open(self.checkpoint_file, 'w', encoding='utf-8') as f:
             f.write(os.path.basename(input_file))
 
     def print_summary(self, start_time: float):
@@ -288,6 +318,7 @@ class VoyageProcessor:
         elapsed = time.time() - start_time
         completed_count = len(self.completed)
         failed_count = len(self.failed)
+        skipped_count = len(self.skipped)
 
         self.logger.info("=" * 80)
         self.logger.info("PROCESSING SUMMARY")
@@ -296,6 +327,7 @@ class VoyageProcessor:
         self.logger.info(f"Output: {self.output_dir}")
         self.logger.info(f"Total completed: {completed_count}")
         self.logger.info(f"Total failed: {failed_count}")
+        self.logger.info(f"Total skipped: {skipped_count}")
         self.logger.info(f"Total elapsed: {elapsed:.1f} seconds ({elapsed/3600:.1f} hours)")
 
         if completed_count > 0:
@@ -307,10 +339,34 @@ class VoyageProcessor:
             for basename, info in self.failed.items():
                 self.logger.warning(f"  - {basename}: {info['error']}")
 
+        if skipped_count > 0:
+            reason_counter = Counter(info.get('reason', 'unknown') for info in self.skipped.values())
+            reason_summary = ", ".join([f"{reason}={count}" for reason, count in reason_counter.items()])
+            self.logger.info(f"Skip reasons: {reason_summary}")
+
         self.logger.info("=" * 80)
 
 
-def process_buffer(input_file: str, processor: VoyageProcessor) -> Tuple[str, str, str, Optional[str]]:
+def generate_output_filename(input_file: str, processed_root: str) -> str:
+    """Build output path using YYYYMMDD subdirectories under processed_root."""
+    basename = os.path.basename(input_file)
+    date_str = VoyageProcessor._extract_date_from_filename(basename)
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y%m%d")
+
+    output_basename = basename.replace('.hdf', '.cfradial.nc')
+    date_dir = Path(processed_root) / date_str
+    date_dir.mkdir(parents=True, exist_ok=True)
+    return str(date_dir / output_basename)
+
+
+def process_buffer(
+    input_file: str,
+    processed_root: str,
+    completed_basenames: set,
+    do_dealiasing: bool,
+    debug: bool,
+) -> Tuple[str, str, str, Optional[str]]:
     """
     Process a single file with error handling.
 
@@ -322,8 +378,14 @@ def process_buffer(input_file: str, processor: VoyageProcessor) -> Tuple[str, st
     ----------
     input_file : str
         Input .hdf file path
-    processor : VoyageProcessor
-        Voyage processor instance
+    processed_root : str
+        Root directory for processed files
+    completed_basenames : set
+        Snapshot of already-completed file basenames
+    do_dealiasing : bool
+        Enable velocity dealiasing
+    debug : bool
+        Enable debug output
 
     Returns
     -------
@@ -333,34 +395,37 @@ def process_buffer(input_file: str, processor: VoyageProcessor) -> Tuple[str, st
         - error_msg: None on success, error string on failure
     """
     try:
-        output_file = processor.generate_output_filename(input_file)
+        output_file = generate_output_filename(input_file, processed_root)
 
-        # Check if output already exists (and is in completed tracking)
+        # Check if file is already in completed tracking snapshot.
         basename = os.path.basename(input_file)
-        if basename in processor.completed:
-            return (input_file, output_file, "skipped", None)
+        if basename in completed_basenames:
+            return (input_file, output_file, "skipped", "already_completed_tracking")
 
         # Process file
         result = opol_processing.process_and_save(
             input_file,
             output_filename=output_file,
-            do_dealiasing=processor.do_dealiasing,
+            do_dealiasing=do_dealiasing,
             use_csu=True,  # Always enabled (no alternative)
-            debug=processor.debug,
+            debug=debug,
             exist_ok=True
         )
 
-        # process_and_save returns None for unsuitable scans (e.g. < 10 sweeps)
-        # without raising — treat as skipped, not success.
+        # process_and_save returns None for both success and skipped scans.
+        # Decide based on output existence.
+        if os.path.isfile(output_file):
+            return (input_file, output_file, "success", None)
+
         if result is None:
-            return (input_file, "", "skipped", "scan skipped by production_line (e.g. too few sweeps)")
+            return (input_file, "", "skipped", "production_line returned None (e.g. unsuitable scan)")
 
         # Return success (tracking updated serially in main thread)
         return (input_file, output_file, "success", None)
 
-    except FileExistsError as e:
+    except FileExistsError:
         # Output already exists, might be from previous run
-        output_file = processor.generate_output_filename(input_file)
+        output_file = generate_output_filename(input_file, processed_root)
         return (input_file, output_file, "success", None)
 
     except Exception as e:
@@ -469,6 +534,23 @@ def main():
     processor.logger.info(f"Dealiasing: {args.do_dealiasing}")
     processor.logger.info("=" * 80)
 
+    # Run-level failure CSV report for postmortem diagnostics.
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    failure_csv = processor.log_dir / f"failure_report_{run_timestamp}.csv"
+    with open(failure_csv, "w", newline="", encoding="utf-8") as fcsv:
+        csv_writer = csv.writer(fcsv)
+        csv_writer.writerow([
+            "timestamp",
+            "chunk_idx",
+            "input_file",
+            "basename",
+            "status",
+            "error_type",
+            "error_message",
+            "traceback",
+        ])
+    processor.logger.info(f"Failure CSV report: {failure_csv}")
+
     # Build work queue
     work_queue = processor.build_work_queue()
 
@@ -482,43 +564,100 @@ def main():
     start_time = time.time()
     processed_this_run = 0
 
+    def handle_results(chunk_idx: int, chunk_start: float, results: List[Tuple[str, str, str, Optional[str]]], retried_serial: bool = False) -> int:
+        """Update tracking for a chunk and emit actionable diagnostics."""
+        success_count = 0
+        failed_count = 0
+        skipped_count = 0
+        skip_reasons = Counter()
+        last_success_file = None
+
+        for input_file, output_file, status, error_msg in results:
+            basename = os.path.basename(input_file)
+            if status == "success":
+                processor.record_success(input_file, output_file)
+                success_count += 1
+                last_success_file = input_file
+                processor.logger.info(f"SUCCESS {basename} -> {output_file}")
+            elif status == "failed":
+                processor.record_failure(input_file, error_msg or "Unknown error")
+                failed_count += 1
+                short_error = (error_msg or "").splitlines()[0] if error_msg else "Unknown error"
+                processor.logger.error(f"FAILED {basename}: {short_error}")
+
+                if error_msg:
+                    head, _, tb = error_msg.partition("\n")
+                    error_type, _, error_message = head.partition(": ")
+                else:
+                    error_type, error_message, tb = "UnknownError", "Unknown error", ""
+
+                with open(failure_csv, "a", newline="", encoding="utf-8") as fcsv:
+                    csv_writer = csv.writer(fcsv)
+                    csv_writer.writerow([
+                        datetime.now().isoformat(),
+                        chunk_idx,
+                        input_file,
+                        basename,
+                        status,
+                        error_type,
+                        error_message,
+                        tb,
+                    ])
+            elif status == "skipped":
+                skipped_count += 1
+                reason = error_msg or "unknown"
+                skip_reasons[reason] += 1
+                processor.record_skip(input_file, reason)
+
+        processor.flush_tracking()
+        if last_success_file is not None:
+            processor.update_checkpoint(last_success_file)
+
+        chunk_elapsed = time.time() - chunk_start
+        summary_prefix = "Chunk retry" if retried_serial else "Chunk"
+        processor.logger.info(
+            f"{summary_prefix} {chunk_idx} complete: {success_count} success, "
+            f"{failed_count} failed, {skipped_count} skipped ({chunk_elapsed:.1f}s)"
+        )
+        if skip_reasons:
+            reason_summary = ", ".join([f"{reason}={count}" for reason, count in skip_reasons.items()])
+            processor.logger.info(f"Chunk {chunk_idx} skip reasons: {reason_summary}")
+
+        return success_count
+
     # Process in chunks
     for chunk_idx, file_chunk in enumerate(chunks(work_queue, args.chunk_size), 1):
         processor.logger.info(f"\nProcessing chunk {chunk_idx} ({len(file_chunk)} files)...")
         chunk_start = time.time()
+        completed_snapshot = set(processor.completed.keys())
+        process_file = partial(
+            process_buffer,
+            processed_root=str(processor.processed_dir),
+            completed_basenames=completed_snapshot,
+            do_dealiasing=processor.do_dealiasing,
+            debug=processor.debug,
+        )
 
         try:
             # Create dask bag and process
-            bag = db.from_sequence(file_chunk)
-            bag = bag.map(lambda f: process_buffer(f, processor))
-            results = bag.compute(num_workers=args.n_workers)
+            npartitions = min(max(args.n_workers, 1), len(file_chunk))
+            bag = db.from_sequence(file_chunk, npartitions=npartitions)
+            bag = bag.map(process_file)
+            results = bag.compute(num_workers=args.n_workers, scheduler="processes")
 
-            # Update tracking serially for all results (no race conditions)
-            success_count = 0
-            failed_count = 0
-            skipped_count = 0
-
-            for input_file, output_file, status, error_msg in results:
-                if status == "success":
-                    processor.record_success(input_file, output_file)
-                    processor.update_checkpoint(input_file)
-                    success_count += 1
-                elif status == "failed":
-                    processor.record_failure(input_file, error_msg)
-                    failed_count += 1
-                elif status == "skipped":
-                    skipped_count += 1
-
-            chunk_elapsed = time.time() - chunk_start
-            processor.logger.info(f"Chunk {chunk_idx} complete: {success_count} success, {failed_count} failed, {skipped_count} skipped ({chunk_elapsed:.1f}s)")
-
-            processed_this_run += success_count
+            processed_this_run += handle_results(chunk_idx, chunk_start, results, retried_serial=False)
 
         except Exception as e:
             processor.logger.error(f"Chunk {chunk_idx} failed with error: {e}\n{traceback.format_exc()}")
-            processor.logger.error("Continuing with next chunk...")
+            processor.logger.error(
+                f"Retrying chunk {chunk_idx} serially to isolate failing files and capture detailed errors..."
+            )
 
-        del bag
+            retry_results = [process_file(input_file) for input_file in file_chunk]
+            processed_this_run += handle_results(chunk_idx, chunk_start, retry_results, retried_serial=True)
+
+        if 'bag' in locals():
+            del bag
 
     # Final summary
     processor.logger.info(f"\nFiles processed in this run: {processed_this_run}")
@@ -528,6 +667,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # Avoid per-process BLAS/OpenMP thread oversubscription when using many workers.
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
     if "PYART_QUIET" not in os.environ:
         os.environ["PYART_QUIET"] = "1"  # Suppress Py-ART warnings
     try:
