@@ -21,6 +21,7 @@ verbose variable names.
 """
 # Python Standard Library
 import os
+import sys
 import time
 import uuid
 import datetime
@@ -83,7 +84,52 @@ KEEP_FIELDS = {
 }
 
 
-def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=False):
+def _get_rss_mb():
+    """Return (rss_mb, peak_rss_mb) when available, else (None, None)."""
+    rss_mb = None
+    peak_rss_mb = None
+
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/status", "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("VmRSS:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            rss_kb = float(parts[1])
+                            rss_mb = rss_kb / 1024.0
+                        break
+        except (OSError, ValueError):
+            pass
+
+    try:
+        resource_mod = __import__("resource")
+        ru_maxrss = float(resource_mod.getrusage(resource_mod.RUSAGE_SELF).ru_maxrss)
+        if sys.platform == "darwin":
+            peak_rss_mb = ru_maxrss / (1024.0 * 1024.0)
+        else:
+            peak_rss_mb = ru_maxrss / 1024.0
+    except (ImportError, AttributeError, OSError, ValueError):
+        pass
+
+    return rss_mb, peak_rss_mb
+
+
+def _log_memory(stage, radar=None, extra=""):
+    """Print lightweight memory diagnostics for ad-hoc HPC profiling."""
+    rss_mb, peak_rss_mb = _get_rss_mb()
+    dims = ""
+    if radar is not None:
+        dims = " nsweeps=%s nrays=%s ngates=%s" % (radar.nsweeps, radar.nrays, radar.ngates)
+    rss_txt = "n/a" if rss_mb is None else "%.1f" % rss_mb
+    peak_txt = "n/a" if peak_rss_mb is None else "%.1f" % peak_rss_mb
+    print(
+        "[mem] pid=%s stage=%s rss_mb=%s peak_rss_mb=%s%s%s"
+        % (os.getpid(), stage, rss_txt, peak_txt, dims, (" " + extra) if extra else "")
+    )
+
+
+def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=False, profile_memory=False):
     """
     Production line for correcting and estimating OPOL radar parameters.
 
@@ -109,6 +155,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         print(f"Processing {radar_file_name}")
 
     radar = radar_codes.read_radar(radar_file_name)
+    if profile_memory:
+        _log_memory("after-read", radar=radar, extra="file=%s" % os.path.basename(radar_file_name))
     if radar.nsweeps < 10:
         if debug:
             print(f"  Skipped: only {radar.nsweeps} sweeps (< 10).")
@@ -153,6 +201,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         if debug:
             print(f"  Range truncated to {MAX_RANGE_M / 1000:.0f} km ({ind_rng.size} gates)")
     t = utils.toc("domain trim", t, debug)
+    if profile_memory:
+        _log_memory("after-domain-trim", radar=radar)
 
     # Resolve field names once for the whole volume (raises if a required field
     # is missing).
@@ -206,6 +256,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         replace_existing=True,
     )
     t = utils.toc("temperature", t, debug)
+    if profile_memory:
+        _log_memory("after-temperature", radar=radar)
 
     # --- Reflectivity cleaning (hydrometeor gate filter) ---
     gf = filtering.do_gatefilter_opol(
@@ -229,12 +281,16 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         replace_existing=True,
     )
     t = utils.toc("refl cleaning", t, debug)
+    if profile_memory:
+        _log_memory("after-refl-cleaning", radar=radar)
 
     # --- PHIDP / KDP (precip-gated PHIDO) ---
     precip_gf = filtering.do_precip_gatefilter(
         radar, refl_name="corrected_reflectivity", rhohv_name="cross_correlation_ratio", snr_name=snr_name
     )
     refl_for_phi = np.ma.filled(dbz_clean, np.nan)
+    if profile_memory:
+        _log_memory("before-phido", radar=radar)
     phidp_corr, kdp = phase.get_phidp(radar, phidp_name, precip_gf, refl_for_phi, temps)
     radar.add_field(
         "corrected_differential_phase",
@@ -247,6 +303,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         replace_existing=True,
     )
     t = utils.toc("phidp/kdp (phido)", t, debug)
+    if profile_memory:
+        _log_memory("after-phido", radar=radar)
 
     # --- Velocity dealiasing (coherence censoring + UNRAVEL) ---
     if do_dealiasing and vel_name in radar.fields:
@@ -262,8 +320,12 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
             vel_meta["comment"] = f"UNRAVEL skipped ({n_coherent} coherent gates)."
         else:
             radar.add_field("VEL_CENSORED", utils.meta(censored, units="m s-1"), replace_existing=True)
+            if profile_memory:
+                _log_memory("before-unravel", radar=radar, extra="coherent=%s" % n_coherent)
             vel_meta = radar_codes.unravel(radar, vgf, vel_name="VEL_CENSORED", dbz_name="corrected_reflectivity")
             radar.fields.pop("VEL_CENSORED", None)
+            if profile_memory:
+                _log_memory("after-unravel", radar=radar, extra="coherent=%s" % n_coherent)
 
         radar.add_field("corrected_velocity", vel_meta, replace_existing=True)
     t = utils.toc("dealiasing (unravel)", t, debug)
@@ -300,6 +362,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     zdr_atten = attenuation.correct_attenuation_zdr(radar, gf, phidp_name="corrected_differential_phase")
     radar.add_field("path_integrated_differential_attenuation", zdr_atten, replace_existing=True)
     t = utils.toc("zdr (+ diff atten)", t, debug)
+    if profile_memory:
+        _log_memory("after-zdr", radar=radar)
 
     # --- Retrieval products ---
     if use_csu:
@@ -353,6 +417,11 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
             replace_existing=True,
         )
         t = utils.toc("products (hid/rain/dsd)", t, debug)
+        if profile_memory:
+            nbytes_mib = (
+                dbz_arr.nbytes + zdr_arr.nbytes + kdp_arr.nbytes + rho_arr.nbytes + t_arr.nbytes
+            ) / (1024.0 * 1024.0)
+            _log_memory("after-products", radar=radar, extra="temp_arrays_mib=%.1f" % nbytes_mib)
 
     # --- Rename surviving raw ODIM fields to CF/Radial verbose names ---
     rename = {
@@ -388,6 +457,8 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     radar_codes.coverage_content_type(radar)
     radar_codes.fill_missing(radar)
     t = utils.toc("finalise", t, debug)
+    if profile_memory:
+        _log_memory("after-finalise", radar=radar)
 
     if debug:
         print(f"  [{'TOTAL production_line':<22}] {time.time() - st:7.3f} s")
@@ -395,7 +466,16 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     return radar
 
 
-def process_and_save(radar_file_name, output_filename, do_dealiasing=True, use_csu=True, debug=False, do_return=False, exist_ok=False):
+def process_and_save(
+    radar_file_name,
+    output_filename,
+    do_dealiasing=True,
+    use_csu=True,
+    debug=False,
+    do_return=False,
+    exist_ok=False,
+    profile_memory=False,
+):
     """
     Run the production line and write the CF/Radial netCDF output.
 
@@ -421,7 +501,13 @@ def process_and_save(radar_file_name, output_filename, do_dealiasing=True, use_c
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        radar = production_line(radar_file_name, do_dealiasing=do_dealiasing, use_csu=use_csu, debug=debug)
+        radar = production_line(
+            radar_file_name,
+            do_dealiasing=do_dealiasing,
+            use_csu=use_csu,
+            debug=debug,
+            profile_memory=profile_memory,
+        )
         if radar is None:
             print(f"{radar_file_name} has not been processed. Check logs.")
             return None
@@ -486,7 +572,11 @@ def process_and_save(radar_file_name, output_filename, do_dealiasing=True, use_c
     radar.metadata = metadata
 
     tw = time.time()
+    if profile_memory:
+        _log_memory("before-write", radar=radar)
     utils.write_compressed_cfradial(radar, output_filename)
+    if profile_memory:
+        _log_memory("after-write", radar=radar)
     if debug:
         elapsed = time.time() - tw
         print(f"  [{'write_cfradial':<22}] {elapsed:7.3f} s")

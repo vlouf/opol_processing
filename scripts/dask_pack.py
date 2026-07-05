@@ -76,6 +76,7 @@ def process_buffer(
     processed_root: str,
     do_dealiasing: bool,
     debug: bool,
+    profile_memory: bool,
 ) -> Tuple[str, str, str, Optional[str]]:
     """
     Process a single file and return (input_file, output_file, status, error_msg).
@@ -91,6 +92,7 @@ def process_buffer(
             do_dealiasing=do_dealiasing,
             use_csu=True,
             debug=debug,
+            profile_memory=profile_memory,
             exist_ok=True,
         )
 
@@ -447,6 +449,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable verbose per-file success logging",
     )
     parser.add_argument(
+        "--profile-memory",
+        dest="profile_memory",
+        action="store_true",
+        help="Log per-stage worker memory diagnostics (RSS + peak RSS)",
+    )
+    parser.add_argument(
         "--retry-failed",
         dest="retry_failed",
         action="store_true",
@@ -506,6 +514,7 @@ def main() -> int:
     logger.info("Chunk size: %s", args.chunk_size)
     logger.info("Workers: %s", args.n_workers)
     logger.info("Dealiasing: %s", args.do_dealiasing)
+    logger.info("Profile memory: %s", args.profile_memory)
     logger.info("Retry failed: %s", args.retry_failed)
 
     mp_context, selected_start_method = get_mp_context(args.mp_start_method)
@@ -532,6 +541,7 @@ def main() -> int:
         processed_root=str(processed_dir),
         do_dealiasing=args.do_dealiasing,
         debug=args.debug,
+        profile_memory=args.profile_memory,
     )
 
     with ProcessPoolExecutor(max_workers=args.n_workers, mp_context=mp_context) as executor:
