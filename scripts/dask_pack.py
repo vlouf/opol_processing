@@ -15,6 +15,7 @@ Design goals:
 
 import argparse
 import csv
+import gc
 import glob
 import json
 import logging
@@ -116,6 +117,10 @@ def process_buffer(
     except Exception as exc:
         error_msg = "%s: %s\n%s" % (type(exc).__name__, str(exc), traceback.format_exc())
         return (input_file, "", "failed", error_msg)
+    finally:
+        # Long-lived pool workers: release cyclic garbage (pyart radar objects
+        # hold reference cycles) so RSS does not ratchet up between tasks.
+        gc.collect()
 
 
 def setup_logger(log_dir: Path) -> logging.Logger:
@@ -225,6 +230,15 @@ def init_failure_csv(log_dir: Path) -> Path:
         )
 
     return failure_csv
+
+
+def init_memory_profile_log(log_dir: Path) -> Path:
+    """Create run-level JSONL memory profile log and return its path."""
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    profile_log = log_dir / ("memory_profile_%s.jsonl" % run_timestamp)
+    with open(profile_log, "w", encoding="utf-8") as fobj:
+        fobj.write("")
+    return profile_log
 
 
 def append_failure_csv_row(
@@ -461,6 +475,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Retry files listed in failed.json instead of skipping them",
     )
     parser.add_argument(
+        "--max-tasks-per-child",
+        dest="max_tasks_per_child",
+        type=int,
+        default=8,
+        help=(
+            "Recycle each worker process after N tasks to bound memory growth "
+            "(0 disables recycling; requires Python >= 3.11 and spawn/forkserver; default: 8)"
+        ),
+    )
+    parser.add_argument(
         "--mp-start-method",
         dest="mp_start_method",
         type=str,
@@ -502,6 +526,10 @@ def main() -> int:
     failed = load_json(failed_file)
 
     failure_csv = init_failure_csv(logs_dir)
+    memory_profile_log: Optional[Path] = None
+    if args.profile_memory:
+        memory_profile_log = init_memory_profile_log(logs_dir)
+        os.environ["OPOL_MEMLOG_PATH"] = str(memory_profile_log)
 
     logger.info("=" * 80)
     logger.info("OPOL PROCESSPOOL PROCESSING")
@@ -511,6 +539,8 @@ def main() -> int:
     logger.info("Processed files: %s", processed_dir)
     logger.info("Tracking: %s", tracking_dir)
     logger.info("Failure CSV report: %s", failure_csv)
+    if memory_profile_log is not None:
+        logger.info("Memory profile log: %s", memory_profile_log)
     logger.info("Chunk size: %s", args.chunk_size)
     logger.info("Workers: %s", args.n_workers)
     logger.info("Dealiasing: %s", args.do_dealiasing)
@@ -519,6 +549,17 @@ def main() -> int:
 
     mp_context, selected_start_method = get_mp_context(args.mp_start_method)
     logger.info("Multiprocessing start method: %s", selected_start_method)
+
+    executor_kwargs = {"max_workers": args.n_workers, "mp_context": mp_context}
+    if args.max_tasks_per_child > 0:
+        if sys.version_info >= (3, 11) and selected_start_method != "fork":
+            executor_kwargs["max_tasks_per_child"] = args.max_tasks_per_child
+            logger.info("Worker recycling: max_tasks_per_child=%s", args.max_tasks_per_child)
+        else:
+            logger.warning(
+                "Worker recycling unavailable (needs Python >= 3.11 and spawn/forkserver start method). "
+                "Worker RSS may grow across chunks and hit the job memory limit."
+            )
 
     work_queue = build_work_queue(
         input_dir=input_dir,
@@ -544,7 +585,7 @@ def main() -> int:
         profile_memory=args.profile_memory,
     )
 
-    with ProcessPoolExecutor(max_workers=args.n_workers, mp_context=mp_context) as executor:
+    with ProcessPoolExecutor(**executor_kwargs) as executor:
         for chunk_idx, chunk_start_idx in enumerate(range(0, len(work_queue), args.chunk_size), 1):
             chunk_files = work_queue[chunk_start_idx : chunk_start_idx + args.chunk_size]
             chunk_start = time.time()
@@ -557,6 +598,19 @@ def main() -> int:
                     "BrokenProcessPool in chunk %s; aborting immediately to avoid serial fallback.",
                     chunk_idx,
                 )
+                # Record the in-flight files so the failure CSV is not empty
+                # when the pool dies (e.g. worker OOM-killed by the scheduler).
+                for aborted_file in chunk_files:
+                    append_failure_csv_row(
+                        failure_csv=failure_csv,
+                        chunk_idx=chunk_idx,
+                        input_file=aborted_file,
+                        basename=os.path.basename(aborted_file),
+                        status="aborted",
+                        error_type="BrokenProcessPool",
+                        error_message="Worker pool died while this chunk was in flight (likely OOM kill).",
+                        tb="",
+                    )
                 return 2
             except Exception as exc:
                 logger.error(
@@ -594,6 +648,12 @@ if __name__ == "__main__":
     os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
     os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+    # Limit glibc malloc arenas and force freed memory back to the OS.
+    # Repeated large numpy allocations otherwise fragment the heap and worker
+    # RSS ratchets upward even though Python has freed the objects.
+    os.environ.setdefault("MALLOC_ARENA_MAX", "2")
+    os.environ.setdefault("MALLOC_TRIM_THRESHOLD_", "134217728")
 
     if "PYART_QUIET" not in os.environ:
         os.environ["PYART_QUIET"] = "1"
