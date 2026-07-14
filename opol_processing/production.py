@@ -52,6 +52,15 @@ MAX_RANGE_M = 150_000.0
 # this value, UNRAVEL is skipped and the censored velocity is passed through.
 MIN_UNRAVEL_GATES = 100
 
+# OPOL volumes from this date onward are affected by RF interference; for those
+# volumes the reflectivity is additionally censored with the velocity-coherence
+# gate filter (interference is incoherent in velocity, the same filter used
+# ahead of UNRAVEL) followed by a RHOHV threshold that removes sea clutter.
+# The censoring propagates to every downstream product (phase, attenuation,
+# ZDR, HID, rainfall, DSD, snowfall).
+INTERFERENCE_START_DATE = pd.Timestamp("2024-01-01")
+RHOHV_CLUTTER_MIN = 0.8
+
 HID_COMMENT = (
     "1: Drizzle; 2: Rain; 3: Ice Crystals; 4: Aggregates; 5: Wet Snow; "
     "6: Vertical Ice; 7: LD Graupel; 8: HD Graupel; 9: Hail; 10: Big Drops"
@@ -359,6 +368,29 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     if profile_memory:
         _profile_memory("after-refl-cleaning", radar=radar, file_name=basename)
 
+    # --- Velocity-coherence gate filter (used for interference censoring and UNRAVEL) ---
+    vgf = None
+    if vel_name in radar.fields and (do_dealiasing or rdate >= INTERFERENCE_START_DATE):
+        vgf = filtering.do_velocity_gatefilter(radar, vel_name=vel_name, sqi_name=sqi_name, th_name=th_name)
+
+    # --- Interference + sea-clutter censoring (post-2024 volumes) ---
+    # Interference is incoherent in velocity: gates rejected by the velocity
+    # coherence filter, or with RHOHV below the sea-clutter threshold, are
+    # censored from the reflectivity. Downstream fields (phase, attenuation,
+    # ZDR, HID, rainfall, DSD, snowfall) inherit the censored reflectivity.
+    interference_mask = None
+    if rdate >= INTERFERENCE_START_DATE and vgf is not None:
+        interference_mask = vgf.gate_excluded | np.ma.filled(rho_corr < RHOHV_CLUTTER_MIN, False)
+        if debug:
+            n_censored = int(np.count_nonzero(interference_mask & ~np.ma.getmaskarray(dbz_clean)))
+            print(f"  Interference/sea-clutter censoring: {n_censored} reflectivity gates removed")
+        dbz_clean = np.ma.masked_where(interference_mask, dbz_clean)
+        radar.fields["corrected_reflectivity"]["data"] = dbz_clean
+        radar.fields["corrected_reflectivity"]["comment"] += (
+            " Interference and sea clutter censored (velocity coherence + RHOHV >= %.2f)." % RHOHV_CLUTTER_MIN
+        )
+        t = utils.toc("interference censor", t, debug)
+
     # --- PHIDP / KDP (precip-gated PHIDO) ---
     precip_gf = filtering.do_precip_gatefilter(
         radar, refl_name="corrected_reflectivity", rhohv_name="cross_correlation_ratio", snr_name=snr_name
@@ -382,8 +414,7 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         _profile_memory("after-phido", radar=radar, file_name=basename)
 
     # --- Velocity dealiasing (coherence censoring + UNRAVEL) ---
-    if do_dealiasing and vel_name in radar.fields:
-        vgf = filtering.do_velocity_gatefilter(radar, vel_name=vel_name, sqi_name=sqi_name, th_name=th_name)
+    if do_dealiasing and vgf is not None:
         n_coherent = int(np.count_nonzero(~vgf.gate_excluded))
         censored = np.ma.masked_where(vgf.gate_excluded, radar.fields[vel_name]["data"])
 
@@ -460,35 +491,53 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
             replace_existing=True,
         )
 
-        rain = hydrometeors.get_rainfall_estimate(dbz_arr, zdr_arr, kdp_arr, t_arr, southern_ocean)
+        rain = hydrometeors.get_rainfall_estimate(dbz_arr, zdr_arr, kdp_arr, t_arr, southern_ocean, hid=hid)
+        rain = rain.astype(np.float32)
+        if interference_mask is not None:
+            rain = np.ma.masked_where(interference_mask, rain)
+        rain_comment = "Southern-Ocean coefficient set." if southern_ocean else "Tropical coefficient set."
+        rain_comment += " Constrained to liquid-phase gates (HID, T > +4C fallback)."
+        if interference_mask is not None:
+            rain_comment += " Interference and sea clutter censored."
         radar.add_field(
             "radar_estimated_rain_rate",
             utils.meta(
-                rain.astype(np.float32),
+                rain,
                 long_name="Rainfall rate",
                 units="mm h-1",
                 standard_name="rainfall_rate",
-                comment="Southern-Ocean coefficient set." if southern_ocean else "Tropical coefficient set.",
+                comment=rain_comment,
             ),
             replace_existing=True,
         )
 
-        nw, d0 = hydrometeors.get_dsd_estimate(dbz_arr, zdr_arr, t_arr)
+        nw, d0 = hydrometeors.get_dsd_estimate(dbz_arr, zdr_arr, t_arr, hid=hid)
+        dsd_comment = "Constrained to liquid-phase gates (HID, T > +4C fallback)."
         radar.add_field(
             "normalized_intercept_parameter",
-            utils.meta(nw.astype(np.float32), long_name="Normalized intercept parameter (log10 Nw)", units="log10(mm-1 m-3)"),
+            utils.meta(
+                nw.astype(np.float32),
+                long_name="Normalized intercept parameter (log10 Nw)",
+                units="log10(mm-1 m-3)",
+                comment=dsd_comment,
+            ),
             replace_existing=True,
         )
         radar.add_field(
             "median_volume_diameter",
-            utils.meta(d0.astype(np.float32), long_name="Median volume diameter D0", units="mm"),
+            utils.meta(d0.astype(np.float32), long_name="Median volume diameter D0", units="mm", comment=dsd_comment),
             replace_existing=True,
         )
 
-        snow = hydrometeors.get_snowfall_estimate(dbz_arr, kdp_arr, t_arr)
+        snow = hydrometeors.get_snowfall_estimate(dbz_arr, kdp_arr, t_arr, hid=hid)
         radar.add_field(
             "radar_estimated_snow_rate",
-            utils.meta(snow.astype(np.float32), long_name="Snowfall rate", units="mm h-1"),
+            utils.meta(
+                snow.astype(np.float32),
+                long_name="Snowfall rate",
+                units="mm h-1",
+                comment="Constrained to ice-phase gates (HID, T <= 0C fallback).",
+            ),
             replace_existing=True,
         )
         t = utils.toc("products (hid/rain/dsd)", t, debug)
