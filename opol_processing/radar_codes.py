@@ -17,6 +17,7 @@ in ``temperature.py``.
     read_radar
     sort_azimuths
     check_reflectivity
+    compute_snr_from_reflectivity
     correct_rhohv
     correct_zdr
     correct_standard_name
@@ -42,8 +43,10 @@ FIELD_ALIASES = {
     "SQI": ["SQI", "SQIH"],    
 }
 
-# Fields without which the file cannot be processed.
-REQUIRED_FIELDS = ["DBZH", "TH", "RHOHV", "ZDR", "PHIDP", "SNR", "VRAD"]
+# Fields without which the file cannot be processed. SNR is not required:
+# some voyages were recorded without an SNR moment, in which case it is
+# recomputed from the total power (``compute_snr_from_reflectivity``).
+REQUIRED_FIELDS = ["DBZH", "TH", "RHOHV", "ZDR", "PHIDP", "VRAD"]
 
 
 def resolve_fields(radar, aliases: dict = FIELD_ALIASES) -> dict:
@@ -209,6 +212,48 @@ def check_reflectivity(radar, refl_field_name: str) -> bool:
     if np.ma.isMaskedArray(dbz) and dbz.count() == 0:
         return False
     return True
+
+
+def compute_snr_from_reflectivity(radar, refl_name: str = "TH", toa: float = 25000.0) -> np.ma.MaskedArray:
+    """
+    Estimate the signal-to-noise ratio (dB) from reflectivity, for volumes
+    recorded without an SNR moment.
+
+    The reflectivity is range-normalised (Z - 20 log10(r)), which is
+    proportional to the received power; the noise floor is estimated as the
+    mean range-normalised signal of gates above ``toa`` metres altitude
+    (assumed echo-free), following the same approach as
+    ``pyart.retrieve.calculate_snr_from_reflectivity``. If the volume does not
+    reach that altitude, the 5th percentile of the range-normalised signal is
+    used as the noise floor instead.
+
+    Parameters
+    ----------
+    radar : pyart.core.Radar
+        Py-ART radar structure.
+    refl_name : str
+        Name of the (total power) reflectivity field.
+    toa : float
+        Altitude (m) above which gates are assumed echo-free.
+
+    Returns
+    -------
+    np.ma.MaskedArray
+        2D SNR (dB), masked where the reflectivity is missing.
+    """
+    z = np.ma.filled(np.ma.asarray(radar.fields[refl_name]["data"], dtype="float64"), np.nan)
+    rg = np.asarray(radar.range["data"], dtype="float64") / 1000.0  # km
+    rg = np.where(rg > 0, rg, np.nan)
+    pseudo = z - 20.0 * np.log10(rg)[np.newaxis, :]
+
+    noise_samples = pseudo[np.asarray(radar.gate_altitude["data"]) >= toa]
+    noise_samples = noise_samples[np.isfinite(noise_samples)]
+    if noise_samples.size > 100:
+        noise_floor = float(noise_samples.mean())
+    else:
+        noise_floor = float(np.nanpercentile(pseudo, 5))
+
+    return np.ma.masked_invalid(pseudo - noise_floor)
 
 
 def correct_rhohv(radar, rhohv_name: str = "RHOHV", snr_name: str = "SNR") -> np.ndarray:

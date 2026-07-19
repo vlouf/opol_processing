@@ -300,6 +300,24 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
     vel_name = fields["VRAD"]
     sqi_name = fields["SQI"]
 
+    # Some voyages were recorded without an SNR moment: recompute it from the
+    # total power (range-normalised signal minus an echo-free noise floor).
+    if snr_name is None:
+        snr_est = radar_codes.compute_snr_from_reflectivity(radar, refl_name=th_name)
+        radar.add_field(
+            "SNR",
+            utils.meta(
+                snr_est.astype(np.float32),
+                long_name="Signal to noise ratio",
+                units="dB",
+                comment="Estimated from total power (no SNR moment recorded).",
+            ),
+            replace_existing=True,
+        )
+        snr_name = "SNR"
+        if debug:
+            print("  SNR moment missing: recomputed from total power.")
+
     # Correct time units (signal processing sometimes drops a space).
     if "since " not in radar.time["units"]:
         radar.time["units"] = radar.time["units"].replace("since", "since ")
