@@ -100,6 +100,10 @@ def compute_hid(
         band="C",
     )
     hid[np.isnan(dbz)] = 0
+    hid[(hid == 1) & (temperature < ICE_TEMP_THRESHOLD)] = 3
+    hid[(hid == 2) & (temperature < ICE_TEMP_THRESHOLD)] = 4
+    hid[(hid == 3) & (temperature > LIQUID_TEMP_THRESHOLD)] = 1
+    hid[(hid == 4) & (temperature > LIQUID_TEMP_THRESHOLD)] = 2
     return hid
 
 
@@ -127,7 +131,7 @@ def get_dsd_estimate(
     Tuple[np.ndarray, np.ndarray]
         (nw, d0).
     """
-    d0 = np.zeros_like(zdr)
+    d0 = np.full_like(zdr, np.nan)
     pos = (-0.5 <= zdr) & (zdr < 1.25)
     tmp = 0.0203 * zdr**4 - 0.1488 * zdr**3 + 0.2209 * zdr**2 + 0.5571 * zdr + 0.801
     d0[pos] = tmp[pos]
