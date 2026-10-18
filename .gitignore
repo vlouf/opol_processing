@@ -112,3 +112,4 @@ scripts/pbs/
 *.pyc
 .vscode/
 settings.json
+notebooks/opol_new
