@@ -9,6 +9,7 @@ Usage:
     opol_process /path/to/input.hdf /path/to/output_dir
     opol_process /path/to/input.hdf /path/to/output_dir --no-dealiasing
     opol_process /path/to/input.hdf /path/to/output_dir --debug
+    opol_process /path/to/input.hdf /path/to/output_dir --phido
 """
 
 import os
@@ -31,6 +32,7 @@ Examples:
   opol_process input.hdf output_dir
   opol_process input.hdf output_dir --no-dealiasing
   opol_process input.hdf output_dir --debug
+  opol_process input.hdf output_dir --phido
         """,
     )
 
@@ -62,6 +64,15 @@ Examples:
         help="Print per-step processing timings",
     )
 
+    parser.add_argument(
+        "--phido",
+        dest="use_phido",
+        action="store_true",
+        default=False,
+        help="Use phido for PHIDP/KDP instead of the default LROSE self-consistency "
+        "algorithm (Dixon and Hubbert 2026). Requires phido to be installed.",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -85,6 +96,7 @@ Examples:
     print(f"Input file:       {input_file}")
     print(f"Output directory: {output_dir}")
     print(f"Dealiasing:       {'enabled' if args.dealiasing else 'disabled'}")
+    print(f"Phase (PHIDP/KDP): {'phido' if args.use_phido else 'LROSE self-consistency'}")
     print(f"Debug:            {'enabled' if args.debug else 'disabled'}")
     print("=" * 80)
     print()
@@ -105,6 +117,7 @@ Examples:
                 use_csu=True,
                 debug=args.debug,
                 exist_ok=True,
+                use_phido=args.use_phido,
             )
 
         print()

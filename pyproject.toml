@@ -38,7 +38,6 @@ dependencies = [
     "netCDF4",
     "csu_radartools",
     "unravel",
-    # "phido @ git+https://github.com/jordanbrook/phido.git",
     "dask",
 ]
 

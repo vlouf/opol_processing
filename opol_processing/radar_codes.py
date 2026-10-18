@@ -184,7 +184,7 @@ def order_sweeps_by_elevation(radar):
     Return a radar whose sweeps are ordered by ascending fixed elevation angle.
 
     The OceanPOL scan strategy changed from bottom-up to top-down. Downstream
-    processing (UNRAVEL 3D, phido non-stationary, bright-band detection) and the
+    processing (UNRAVEL 3D, phase processing, bright-band detection) and the
     published product all assume elevation increases with sweep index, so the
     volume is re-ordered when the sweeps are not already ascending.
 

@@ -138,7 +138,7 @@ def correct_attenuation(r, refl, proc_dp_phase_shift, temp):
     return atten
 
 
-def correct_attenuation_zdr(radar, gatefilter, zdr_name="ZDR_CORR", phidp_name="PHIDP_PHIDO", alpha=0.016):
+def correct_attenuation_zdr(radar, gatefilter, zdr_name="ZDR_CORR", phidp_name="corrected_differential_phase", alpha=0.016):
     """
     Correct differential attenuation on differential reflectivity (ZDR).
 

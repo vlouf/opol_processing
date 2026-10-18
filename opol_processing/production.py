@@ -3,9 +3,10 @@ OPOL Level 1b driver.
 
 Reads an ODIM volume, applies the oceanpol_kit science (alias resolution,
 date-indexed calibration, robust ERA5/bright-band temperature, coherence-based
-velocity censoring + UNRAVEL, precip-gated PHIDO phase, Z-PHI attenuation,
-Southern-Ocean rainfall, DSD/snow/HID) and writes a CF/Radial netCDF with
-verbose variable names.
+velocity censoring + UNRAVEL, precip-gated PHIDP/KDP with the LROSE
+self-consistency algorithm of Dixon and Hubbert (2026) (phido optional),
+Z-PHI attenuation, Southern-Ocean rainfall, DSD/snow/HID) and writes a
+CF/Radial netCDF with verbose variable names.
 
 @project: OCEANPol
 @title: production
@@ -210,7 +211,9 @@ def _profile_memory(stage, radar=None, file_name="", extra=""):
     )
 
 
-def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=False, profile_memory=False):
+def production_line(
+    radar_file_name, do_dealiasing=True, use_csu=True, debug=False, profile_memory=False, use_phido=False
+):
     """
     Production line for correcting and estimating OPOL radar parameters.
 
@@ -224,6 +227,9 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         Compute HID/rainfall/DSD/snow products.
     debug : bool
         If True, print the wall-clock time taken by each processing step.
+    use_phido : bool
+        Use phido's non-stationary retrieval for PHIDP/KDP instead of the
+        default LROSE self-consistency algorithm (Dixon and Hubbert 2026).
 
     Returns
     -------
@@ -409,27 +415,42 @@ def production_line(radar_file_name, do_dealiasing=True, use_csu=True, debug=Fal
         )
         t = utils.toc("interference censor", t, debug)
 
-    # --- PHIDP / KDP (precip-gated PHIDO) ---
+    # --- PHIDP / KDP (precip-gated; LROSE self-consistency by default) ---
+    phase_method = "phido" if use_phido else phase.DEFAULT_METHOD
     precip_gf = filtering.do_precip_gatefilter(
         radar, refl_name="corrected_reflectivity", rhohv_name="cross_correlation_ratio", snr_name=snr_name
     )
     refl_for_phi = np.ma.filled(dbz_clean, np.nan)
+    # The self-consistency relation needs calibrated ZDR (the offset is applied
+    # to the ZDR field itself further down).
+    zdr_for_phi = np.ma.filled(np.ma.asarray(radar.fields[zdr_name]["data"], dtype="float64"), np.nan) + zdr_offset
     if profile_memory:
-        _profile_memory("before-phido", radar=radar, file_name=basename)
-    phidp_corr, kdp = phase.get_phidp(radar, phidp_name, precip_gf, refl_for_phi, temps)
+        _profile_memory("before-phase", radar=radar, file_name=basename)
+    phidp_corr, kdp = phase.get_phidp(
+        radar,
+        phidp_name,
+        precip_gf,
+        refl_for_phi,
+        temps,
+        zdr=zdr_for_phi,
+        rhohv=rho_corr,
+        snr=radar.fields[snr_name]["data"],
+        method=phase_method,
+    )
+    phidp_attrs, kdp_attrs = phase.field_metadata(phase_method)
     radar.add_field(
         "corrected_differential_phase",
-        utils.meta(phidp_corr.astype(np.float32), long_name="Corrected differential phase (PHIDO)", units="degree"),
+        utils.meta(phidp_corr.astype(np.float32), long_name="Corrected differential phase", units="degree", **phidp_attrs),
         replace_existing=True,
     )
     radar.add_field(
         "corrected_specific_differential_phase",
-        utils.meta(kdp.astype(np.float32), long_name="Corrected specific differential phase (PHIDO)", units="degree/km"),
+        utils.meta(kdp.astype(np.float32), long_name="Corrected specific differential phase", units="degree/km", **kdp_attrs),
         replace_existing=True,
     )
-    t = utils.toc("phidp/kdp (phido)", t, debug)
+    t = utils.toc(f"phidp/kdp ({phase_method})", t, debug)
     if profile_memory:
-        _profile_memory("after-phido", radar=radar, file_name=basename)
+        _profile_memory("after-phase", radar=radar, file_name=basename)
 
     # --- Velocity dealiasing (coherence censoring + UNRAVEL) ---
     if do_dealiasing and vgf is not None:
@@ -622,6 +643,7 @@ def process_and_save(
     do_return=False,
     exist_ok=False,
     profile_memory=False,
+    use_phido=False,
 ):
     """
     Run the production line and write the CF/Radial netCDF output.
@@ -642,6 +664,9 @@ def process_and_save(
         If True, return the processed radar object (for testing).
     exist_ok : bool
         If False, raise error if output file already exists. If True, overwrite.
+    use_phido : bool
+        Use phido for PHIDP/KDP instead of the default LROSE self-consistency
+        algorithm (Dixon and Hubbert 2026).
     """
     if os.path.isfile(output_filename) and not exist_ok:
         raise FileExistsError(f"Output file {output_filename} already exists. Use exist_ok=True to overwrite.")
@@ -654,6 +679,7 @@ def process_and_save(
             use_csu=use_csu,
             debug=debug,
             profile_memory=profile_memory,
+            use_phido=use_phido,
         )
         if radar is None:
             print(f"{radar_file_name} has not been processed. Check logs.")

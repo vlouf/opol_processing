@@ -6,7 +6,7 @@ the public **CF/Radial netCDF Level 1b** product.
 The science is kept in sync with the [`oceanpol_kit`](https://github.com/vlouf/oceanpol_kit)
 reference (alias-based field resolution, date-indexed calibration, robust
 ERA5/ERA5T + bright-band temperature, SQI-coherence velocity censoring with
-UNRAVEL, precip-gated PHIDO phase, Z-PHI attenuation, Southern-Ocean rainfall,
+UNRAVEL, precip-gated PHIDP/KDP, Z-PHI attenuation, Southern-Ocean rainfall,
 DSD/snow/HID). `oceanpol_kit` writes the compact ODIM HDF5 product; this pipeline
 emits the verbose CF/Radial netCDF that downstream users rely on.
 
@@ -68,7 +68,6 @@ adjacent ray pairs before writing, halving the time and range dimensions.
 - [dask](https://www.dask.org/)
 - [csu_radartools](https://github.com/CSU-Radarmet/CSU_RadarTools)
 - [unravel](https://github.com/vlouf/dealias)
-- [phido](https://github.com/jordanbrook/phido)
 
 ## Installation
 
@@ -153,7 +152,8 @@ opol_processing/
     calibration.py           reflectivity calibration
     filtering.py             signal quality / censoring
     hydrometeors.py          HID, rainfall, DSD, snow
-    phase.py                 PhiDP/KDP processing (PHIDO)
+    phase.py                 PhiDP/KDP processing (LROSE default)
+    kdp_lrose.py             LROSE self-consistency KDP (Dixon & Hubbert 2026)
     radar_codes.py           I/O, sweep ordering, metadata
     temperature.py           ERA5 / bright-band temperature profile
 scripts/
